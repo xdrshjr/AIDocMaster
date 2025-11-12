@@ -3,6 +3,8 @@
 > AI-powered document editing, modification, and validation tool
 
 [中文文档](./README.zh-CN.md)
+![img.png](imgs/img.png)
+
 
 ## Overview
 
