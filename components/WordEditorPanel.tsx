@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -38,7 +38,12 @@ interface WordEditorPanelProps {
   onExportReady?: (ready: boolean) => void;
 }
 
-const WordEditorPanel = ({ onContentChange, onExportReady }: WordEditorPanelProps) => {
+export interface WordEditorPanelRef {
+  getContent: () => string;
+}
+
+const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
+  ({ onContentChange, onExportReady }, ref) => {
   const dict = getDictionary('en');
   const [isUploading, setIsUploading] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -75,6 +80,19 @@ const WordEditorPanel = ({ onContentChange, onExportReady }: WordEditorPanelProp
       onContentChange?.(html);
     },
   });
+
+  // Expose getContent method to parent via ref
+  useImperativeHandle(ref, () => ({
+    getContent: () => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot get content', undefined, 'WordEditorPanel');
+        return '';
+      }
+      const html = editor.getHTML();
+      logger.debug('Getting editor content', { contentLength: html.length }, 'WordEditorPanel');
+      return html;
+    },
+  }), [editor]);
 
   useEffect(() => {
     logger.component('WordEditorPanel', 'mounted');
@@ -516,6 +534,8 @@ const WordEditorPanel = ({ onContentChange, onExportReady }: WordEditorPanelProp
       />
     </div>
   );
-};
+});
+
+WordEditorPanel.displayName = 'WordEditorPanel';
 
 export default WordEditorPanel;
