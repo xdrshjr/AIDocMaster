@@ -174,6 +174,21 @@ const electronAPI = {
       };
     }
   },
+
+  /**
+   * Get API server port (for packaged mode)
+   */
+  getApiServerPort: async () => {
+    try {
+      logger.debug('Calling getApiServerPort');
+      const port = await ipcRenderer.invoke('get-api-server-port');
+      logger.debug('API server port retrieved', { port });
+      return port;
+    } catch (error) {
+      logger.error('Failed to get API server port', { error: error.message });
+      return null;
+    }
+  },
 };
 
 /**

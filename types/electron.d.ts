@@ -41,6 +41,7 @@ interface ElectronAPI {
     success: boolean;
     error?: string;
   }>;
+  getApiServerPort: () => Promise<number | null>;
 }
 
 interface Window {

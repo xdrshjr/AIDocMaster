@@ -13,6 +13,7 @@ import ChatInput from './ChatInput';
 import { logger } from '@/lib/logger';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
+import { buildApiUrl } from '@/lib/apiConfig';
 
 export interface ChatDialogProps {
   isOpen: boolean;
@@ -124,8 +125,12 @@ const ChatDialog = ({
       
       apiMessages.push({ role: 'user', content });
 
+      // Get appropriate API URL based on environment
+      const apiUrl = await buildApiUrl('/api/chat');
+      logger.debug('Using API URL for chat', { apiUrl }, 'ChatDialog');
+
       // Call streaming API
-      const response = await fetch('/api/chat', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

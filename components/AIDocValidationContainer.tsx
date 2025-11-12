@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
 import WordEditorPanel from './WordEditorPanel';
 import ValidationResultPanel from './ValidationResultPanel';
+import { buildApiUrl } from '@/lib/apiConfig';
 
 export interface ValidationIssue {
   id: string;
@@ -132,8 +133,12 @@ const AIDocValidationContainer = ({
           chunkLength: chunks[i].length,
         }, 'AIDocValidationContainer');
 
+        // Get appropriate API URL based on environment
+        const apiUrl = await buildApiUrl('/api/document-validation');
+        logger.debug('Using API URL for validation', { apiUrl, chunkIndex: i }, 'AIDocValidationContainer');
+
         // Call validation API
-        const response = await fetch('/api/document-validation', {
+        const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

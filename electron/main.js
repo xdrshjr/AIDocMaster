@@ -16,6 +16,7 @@
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const ElectronAPIServer = require('./api-server');
 
 // Window configuration constants
 const WINDOW_CONFIG = {
@@ -95,6 +96,9 @@ const logger = new ElectronLogger();
 
 // Keep a global reference of the window object
 let mainWindow = null;
+
+// API server instance (for packaged mode only)
+let apiServer = null;
 
 /**
  * Create the main application window
@@ -236,13 +240,43 @@ function createWindow() {
 /**
  * Application lifecycle: Ready
  */
-app.on('ready', () => {
+app.on('ready', async () => {
   logger.info('Application ready', {
     version: app.getVersion(),
     name: app.getName(),
     userDataPath: app.getPath('userData'),
     appPath: app.getAppPath(),
+    isPackaged: app.isPackaged,
   });
+
+  // Start API server in packaged mode
+  if (app.isPackaged) {
+    logger.info('Running in packaged mode, starting API server');
+    
+    try {
+      apiServer = new ElectronAPIServer(app, logger);
+      const port = await apiServer.start();
+      
+      logger.success('API server initialized', {
+        port,
+        address: `http://localhost:${port}`,
+      });
+
+      // Store the API server port for the renderer process
+      global.apiServerPort = port;
+    } catch (error) {
+      logger.error('Failed to start API server', {
+        error: error.message,
+        stack: error.stack,
+      });
+      
+      // Continue without API server - user will see errors when trying to use features
+      global.apiServerPort = null;
+    }
+  } else {
+    logger.info('Running in development mode, using Next.js dev server for API routes');
+    global.apiServerPort = null;
+  }
 
   createWindow();
 });
@@ -276,8 +310,20 @@ app.on('activate', () => {
 /**
  * Application lifecycle: Before quit
  */
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   logger.info('Application preparing to quit');
+
+  // Stop API server if running
+  if (apiServer) {
+    logger.info('Stopping API server');
+    try {
+      await apiServer.stop();
+    } catch (error) {
+      logger.error('Error stopping API server', {
+        error: error.message,
+      });
+    }
+  }
 });
 
 /**
@@ -346,6 +392,14 @@ ipcMain.handle('get-window-bounds', () => {
     return bounds;
   }
   return null;
+});
+
+ipcMain.handle('get-api-server-port', () => {
+  logger.debug('IPC: get-api-server-port called', {
+    port: global.apiServerPort,
+    isPackaged: app.isPackaged,
+  });
+  return global.apiServerPort;
 });
 
 /**
