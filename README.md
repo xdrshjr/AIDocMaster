@@ -1,36 +1,205 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DocAIMaster
+
+> AI-powered document editing, modification, and validation tool
+
+[中文文档](./README.zh-CN.md)
+
+## Overview
+
+DocAIMaster is a sophisticated desktop application built with Next.js and React, designed to provide AI-powered document validation and editing capabilities. The application features a clean, elegant interface inspired by Apple's design language with a modern neo-brutalism aesthetic.
+
+## Features
+
+- 🤖 **AI Document Validation** - Intelligent document checking and validation using LLM APIs
+- 🎨 **Beautiful UI** - Clean, modern interface with neo-brutalism design system
+- 🌍 **Internationalization** - Built-in support for multiple languages (English, Chinese)
+- 📝 **Detailed Logging** - Comprehensive logging system for debugging and monitoring
+- 🖥️ **Desktop-Ready** - Fixed-height layout optimized for desktop applications
+
+## Technology Stack
+
+- **Framework**: Next.js 16 with App Router
+- **UI Library**: React 19
+- **Styling**: Tailwind CSS 4 with custom neo-brutalism theme
+- **TypeScript**: Full type safety
+- **Icons**: Lucide React
+- **Internationalization**: Custom i18n implementation
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 20+ 
+- npm or yarn
+
+### Installation
+
+1. Clone the repository:
+
+```bash
+git clone <repository-url>
+cd AIDocMaster
+```
+
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+3. Set up environment variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` and add your LLM API credentials:
+
+```env
+LLM_API_KEY=your_api_key_here
+LLM_API_URL=your_api_url_here
+LLM_MODEL_NAME=gpt-4
+LLM_API_TIMEOUT=30000
+```
+
+### Development
+
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser to see the application.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Create a production build:
 
-## Learn More
+```bash
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+Start the production server:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm start
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Project Structure
 
-## Deploy on Vercel
+```
+AIDocMaster/
+├── app/                    # Next.js app directory
+│   ├── layout.tsx         # Root layout
+│   ├── page.tsx           # Home page
+│   └── globals.css        # Global styles with theme
+├── components/            # React components
+│   ├── Header.tsx         # Top navigation bar
+│   ├── Footer.tsx         # Bottom footer
+│   ├── Taskbar.tsx        # Vertical task navigation
+│   └── Container.tsx      # Main content area
+├── lib/                   # Utility libraries
+│   ├── utils.ts           # Helper functions
+│   ├── logger.ts          # Logging utility
+│   └── i18n/              # Internationalization
+│       ├── config.ts      # i18n configuration
+│       └── dictionaries.ts # Translation dictionaries
+├── public/                # Static assets
+├── .env.example           # Environment variables template
+└── package.json           # Project dependencies
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Architecture
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Layout Structure
+
+The application uses a fixed-height layout designed for desktop applications:
+
+```
+┌─────────────────────────────────┐
+│          Header                  │
+├────┬────────────────────────────┤
+│    │                             │
+│ T  │                             │
+│ a  │       Container             │
+│ s  │                             │
+│ k  │                             │
+│ b  │                             │
+│ a  │                             │
+│ r  │                             │
+│    │                             │
+├────┴────────────────────────────┤
+│          Footer                  │
+└─────────────────────────────────┘
+```
+
+### Key Components
+
+- **Header**: Top navigation bar with application title
+- **Taskbar**: Vertical sidebar on the left with task icons and tooltips
+- **Container**: Main content area for displaying active task content
+- **Footer**: Bottom bar with copyright information
+
+### Theme System
+
+The project uses a custom neo-brutalism theme with:
+- Bold borders (4px)
+- Strong shadows
+- High contrast colors
+- Clean typography (DM Sans, Space Mono)
+- OKLCH color space for better color perception
+
+### Internationalization
+
+The i18n system supports multiple languages with:
+- Dictionary-based translations
+- Type-safe translation keys
+- Easy language switching capability
+
+### Logging
+
+Comprehensive logging system with:
+- Multiple log levels (info, warn, error, debug, success)
+- Contextual logging
+- Component lifecycle tracking
+- API call logging
+- Development/production mode awareness
+
+## Configuration
+
+### Environment Variables
+
+See `.env.example` for all available configuration options.
+
+### Theme Customization
+
+Edit `app/globals.css` to customize the color scheme and design tokens.
+
+## Browser Support
+
+- Chrome/Edge (latest)
+- Firefox (latest)
+- Safari (latest)
+
+**Note**: This application is designed for desktop use only. Mobile access will redirect to desktop view.
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is proprietary software. All rights reserved.
+
+## Support
+
+For support, please open an issue in the GitHub repository.
+
+---
+
+Built with ❤️ using Next.js and React
