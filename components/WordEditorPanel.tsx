@@ -6,12 +6,14 @@
 'use client';
 
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
+import { Highlight } from '@/lib/highlightExtension';
+import { highlightTextInEditor, clearAllHighlights, getSeverityColor, scrollToHighlightByIssueId } from '@/lib/highlightUtils';
 import { 
   Bold, 
   Italic, 
@@ -36,14 +38,21 @@ import mammoth from 'mammoth/mammoth.browser';
 interface WordEditorPanelProps {
   onContentChange?: (content: string) => void;
   onExportReady?: (ready: boolean) => void;
+  onHighlightClick?: (issueId: string, chunkIndex: number) => void;
+  onDocumentUpload?: () => void;
 }
 
 export interface WordEditorPanelRef {
   getContent: () => string;
+  highlightIssue: (originalText: string, issueId: string, chunkIndex: number, severity: 'high' | 'medium' | 'low') => void;
+  highlightAllIssues: (issues: Array<{ originalText: string; id: string; chunkIndex: number; severity: 'high' | 'medium' | 'low' }>) => void;
+  clearHighlights: () => void;
+  scrollToIssue: (issueId: string) => boolean;
+  getEditor: () => Editor | null;
 }
 
 const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
-  ({ onContentChange, onExportReady }, ref) => {
+  ({ onContentChange, onExportReady, onHighlightClick, onDocumentUpload }, ref) => {
   const dict = getDictionary('en');
   const [isUploading, setIsUploading] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -123,12 +132,39 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
       }),
       TextStyle,
       Color,
+      Highlight.configure({
+        multicolor: true,
+        HTMLAttributes: {},
+        onHighlightClick: (issueId: string, chunkIndex: number) => {
+          logger.info('Highlight clicked in editor', { issueId, chunkIndex }, 'WordEditorPanel');
+          onHighlightClick?.(issueId, chunkIndex);
+        },
+      }),
     ],
     content: getDefaultEditorContent(),
     immediatelyRender: false,
     editorProps: {
       attributes: {
         class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-xl focus:outline-none max-w-none p-6 min-h-full',
+      },
+      handleClick: (view, pos, event) => {
+        // Check if clicking on a highlight mark
+        const { state } = view;
+        const { doc } = state;
+        const clickedNode = doc.nodeAt(pos);
+        
+        if (clickedNode && clickedNode.marks) {
+          const highlightMark = clickedNode.marks.find(mark => mark.type.name === 'highlight');
+          
+          if (highlightMark) {
+            const { issueId, chunkIndex } = highlightMark.attrs;
+            logger.info('Highlight mark clicked', { issueId, chunkIndex }, 'WordEditorPanel');
+            onHighlightClick?.(issueId, chunkIndex);
+            return true;
+          }
+        }
+        
+        return false;
       },
     },
     onUpdate: ({ editor }) => {
@@ -138,7 +174,7 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     },
   });
 
-  // Expose getContent method to parent via ref
+  // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     getContent: () => {
       if (!editor) {
@@ -148,6 +184,102 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
       const html = editor.getHTML();
       logger.debug('Getting editor content', { contentLength: html.length }, 'WordEditorPanel');
       return html;
+    },
+    highlightIssue: (originalText: string, issueId: string, chunkIndex: number, severity: 'high' | 'medium' | 'low') => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot highlight', undefined, 'WordEditorPanel');
+        return;
+      }
+      
+      logger.info('Highlighting issue in editor', { issueId, chunkIndex, severity }, 'WordEditorPanel');
+      
+      const color = getSeverityColor(severity);
+      const success = highlightTextInEditor(editor, originalText, issueId, chunkIndex, color);
+      
+      if (!success) {
+        logger.warn('Failed to highlight text in editor', { issueId, originalText: originalText.substring(0, 50) }, 'WordEditorPanel');
+      }
+    },
+    highlightAllIssues: (issues: Array<{ originalText: string; id: string; chunkIndex: number; severity: 'high' | 'medium' | 'low' }>) => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot highlight all issues', undefined, 'WordEditorPanel');
+        return;
+      }
+      
+      logger.info('Auto-highlighting all validation issues in editor', {
+        totalIssues: issues.length,
+        highCount: issues.filter(i => i.severity === 'high').length,
+        mediumCount: issues.filter(i => i.severity === 'medium').length,
+        lowCount: issues.filter(i => i.severity === 'low').length,
+      }, 'WordEditorPanel');
+
+      let successCount = 0;
+      let failCount = 0;
+
+      // Highlight all issues in batch
+      issues.forEach((issue, index) => {
+        if (!issue.originalText) {
+          logger.warn('Issue missing originalText, skipping highlight', {
+            issueId: issue.id,
+            issueIndex: index,
+          }, 'WordEditorPanel');
+          failCount++;
+          return;
+        }
+
+        const color = getSeverityColor(issue.severity);
+        const success = highlightTextInEditor(editor, issue.originalText, issue.id, issue.chunkIndex, color);
+        
+        if (success) {
+          successCount++;
+          logger.debug('Issue highlighted successfully', {
+            issueId: issue.id,
+            severity: issue.severity,
+            chunkIndex: issue.chunkIndex,
+          }, 'WordEditorPanel');
+        } else {
+          failCount++;
+          logger.warn('Failed to highlight issue text', {
+            issueId: issue.id,
+            originalTextPreview: issue.originalText.substring(0, 50),
+            severity: issue.severity,
+          }, 'WordEditorPanel');
+        }
+      });
+
+      logger.success('Batch highlighting completed', {
+        totalIssues: issues.length,
+        successCount,
+        failCount,
+        successRate: `${((successCount / issues.length) * 100).toFixed(1)}%`,
+      }, 'WordEditorPanel');
+    },
+    clearHighlights: () => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot clear highlights', undefined, 'WordEditorPanel');
+        return;
+      }
+      
+      logger.info('Clearing all highlights from editor', undefined, 'WordEditorPanel');
+      clearAllHighlights(editor);
+    },
+    scrollToIssue: (issueId: string) => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot scroll to issue', undefined, 'WordEditorPanel');
+        return false;
+      }
+      
+      logger.info('Scrolling to issue in editor', { issueId }, 'WordEditorPanel');
+      const success = scrollToHighlightByIssueId(editor, issueId);
+      
+      if (!success) {
+        logger.warn('Failed to scroll to issue', { issueId }, 'WordEditorPanel');
+      }
+      
+      return success;
+    },
+    getEditor: () => {
+      return editor;
     },
   }), [editor]);
 
@@ -175,6 +307,13 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     }
 
     logger.info('Starting file upload', { fileName: file.name, fileSize: file.size }, 'WordEditorPanel');
+    
+    // Clear validation results before loading new document
+    if (onDocumentUpload) {
+      logger.debug('Calling onDocumentUpload callback to clear validation results', undefined, 'WordEditorPanel');
+      onDocumentUpload();
+    }
+    
     setIsUploading(true);
     setFileName(file.name);
 

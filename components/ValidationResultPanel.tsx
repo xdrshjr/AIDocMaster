@@ -2,6 +2,7 @@
  * ValidationResultPanel Component
  * Displays validation results for the uploaded document with elegant streaming UI
  * Shows structured JSON validation issues in a scrollable, beautiful format
+ * Enhanced with modern, clean design and better visual hierarchy
  */
 
 'use client';
@@ -17,6 +18,8 @@ interface ValidationResultPanelProps {
   isValidating?: boolean;
   currentChunk?: number;
   totalChunks?: number;
+  selectedIssueId?: string | null;
+  onIssueClick?: (issue: ValidationIssue) => void;
 }
 
 const ValidationResultPanel = ({ 
@@ -24,17 +27,20 @@ const ValidationResultPanel = ({
   isValidating = false,
   currentChunk = 0,
   totalChunks = 0,
+  selectedIssueId = null,
+  onIssueClick,
 }: ValidationResultPanelProps) => {
   const dict = getDictionary('en');
   const resultsEndRef = useRef<HTMLDivElement>(null);
+  const issueRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
-    logger.component('ValidationResultPanel', 'mounted');
+    logger.info('ValidationResultPanel component mounted', undefined, 'ValidationResultPanel');
   }, []);
 
   // Auto-scroll to bottom when new results arrive
   useEffect(() => {
-    if (resultsEndRef.current) {
+    if (resultsEndRef.current && !selectedIssueId) {
       resultsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
     
@@ -45,111 +51,407 @@ const ValidationResultPanel = ({
         totalIssues: results.reduce((sum, r) => sum + r.issues.length, 0),
       }, 'ValidationResultPanel');
     }
-  }, [results]);
+  }, [results, selectedIssueId]);
+
+  // Scroll to selected issue when it changes
+  useEffect(() => {
+    if (selectedIssueId) {
+      const issueElement = issueRefs.current.get(selectedIssueId);
+      
+      if (issueElement) {
+        logger.info('Scrolling to selected issue', { issueId: selectedIssueId }, 'ValidationResultPanel');
+        
+        issueElement.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+        
+        // Flash animation for visual feedback
+        issueElement.style.animation = 'flash 0.5s ease-in-out';
+        setTimeout(() => {
+          issueElement.style.animation = '';
+        }, 500);
+      } else {
+        logger.warn('Issue element not found for scrolling', { issueId: selectedIssueId }, 'ValidationResultPanel');
+      }
+    }
+  }, [selectedIssueId]);
 
   const hasResults = results.length > 0;
   const totalIssuesCount = results.reduce((sum, r) => sum + r.issues.length, 0);
 
+  // Group all issues by severity across all results
+  const groupedIssues = {
+    high: [] as ValidationIssue[],
+    medium: [] as ValidationIssue[],
+    low: [] as ValidationIssue[],
+  };
+
+  // Collect all issues from all chunks and group by severity
+  results.forEach((result) => {
+    result.issues.forEach((issue) => {
+      groupedIssues[issue.severity].push(issue);
+    });
+  });
+
+  // Count issues by severity
+  const highCount = groupedIssues.high.length;
+  const mediumCount = groupedIssues.medium.length;
+  const lowCount = groupedIssues.low.length;
+
+  // Check if there are any errors in results
+  const hasErrors = results.some(r => r.error);
+
+  logger.debug('Grouped validation issues by severity', {
+    highCount,
+    mediumCount,
+    lowCount,
+    totalIssuesCount,
+    resultsCount: results.length,
+  }, 'ValidationResultPanel');
+
   return (
     <div className="h-full flex flex-col bg-background">
-      {/* Header */}
-      <div className="border-b-4 border-border px-6 py-4 bg-card">
+      {/* Enhanced Header with Modern Design */}
+      <div className="border-b-2 border-border px-8 py-5 bg-card/50 backdrop-blur-sm">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold text-foreground">
-              {dict.docValidation.validationResults}
-            </h2>
-            {hasResults && !isValidating && (
-              <span className="px-2.5 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-full">
-                {totalIssuesCount} {totalIssuesCount === 1 ? 'issue' : 'issues'} found
-              </span>
-            )}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-foreground tracking-tight">
+                  {dict.docValidation.validationResults}
+                </h2>
+                {hasResults && !isValidating && totalIssuesCount > 0 && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {totalIssuesCount} {totalIssuesCount === 1 ? 'issue' : 'issues'} detected
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
           
-          {/* Status Indicator */}
+          {/* Enhanced Status Indicator */}
           {isValidating && (
-            <div className="flex items-center gap-2 text-sm">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                <span className="text-muted-foreground">
-                  {formatChunkProgress(currentChunk, totalChunks, dict.docValidation.chunkProgress)}
-                </span>
+            <div className="flex items-center gap-2.5 px-4 py-2 bg-primary/5 rounded-lg border border-primary/10">
+              <div className="relative w-4 h-4">
+                <div className="absolute inset-0 bg-primary rounded-full animate-ping opacity-20" />
+                <div className="absolute inset-0 bg-primary rounded-full animate-pulse" />
               </div>
+              <span className="text-sm font-medium text-foreground">
+                {formatChunkProgress(currentChunk, totalChunks, dict.docValidation.chunkProgress)}
+              </span>
+            </div>
+          )}
+          
+          {/* Success Badge */}
+          {hasResults && !isValidating && totalIssuesCount === 0 && !results.some(r => r.error) && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-green-50 rounded-lg border border-green-200">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <span className="text-sm font-semibold text-green-700">All Clear</span>
             </div>
           )}
         </div>
       </div>
       
-      {/* Content Area - Scrollable */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-6">
+      {/* Enhanced Content Area - Scrollable with Better Spacing */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-6 validation-results-scrollbar">
         {!hasResults && !isValidating && (
-          // Empty State
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <div className="w-20 h-20 mx-auto mb-6 bg-card border-4 border-border rounded-full flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
-                </svg>
+          // Enhanced Empty State with Modern Design
+          <div className="h-full flex items-center justify-center p-6">
+            <div className="text-center max-w-lg">
+              <div className="relative w-24 h-24 mx-auto mb-8">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20 rounded-2xl blur-xl" />
+                <div className="relative w-24 h-24 bg-card border-2 border-border rounded-2xl flex items-center justify-center shadow-lg">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <path d="M9 15h6" />
+                    <path d="M12 18v-6" />
+                  </svg>
+                </div>
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">
+              
+              <h3 className="text-2xl font-bold text-foreground mb-3 tracking-tight">
                 Ready for AI Validation
               </h3>
-              <p className="text-sm text-muted-foreground mb-4">
+              <p className="text-base text-muted-foreground mb-8 leading-relaxed">
                 {dict.docValidation.validationPlaceholder}
               </p>
-              <div className="bg-card border-2 border-border p-4 text-left">
-                <p className="text-xs font-medium text-foreground mb-2">
-                  Click the AI Check button to analyze:
-                </p>
-                <ul className="text-xs text-muted-foreground space-y-1">
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary mt-0.5">•</span>
-                    <span>Grammar and spelling</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary mt-0.5">•</span>
-                    <span>Word usage and vocabulary</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary mt-0.5">•</span>
-                    <span>Punctuation correctness</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-primary mt-0.5">•</span>
-                    <span>Logical consistency</span>
-                  </li>
-                </ul>
+              
+              <div className="bg-gradient-to-br from-card to-card/50 border-2 border-border rounded-xl p-6 shadow-sm text-left">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-bold text-foreground">
+                    AI-Powered Document Analysis
+                  </p>
+                </div>
+                
+                <div className="grid gap-3">
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
+                    <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Grammar & Spelling</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Detect and correct grammatical errors</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
+                    <div className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Word Usage & Vocabulary</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Improve word choice and clarity</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
+                    <div className="w-2 h-2 rounded-full bg-secondary mt-1.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Punctuation Correctness</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Ensure proper punctuation usage</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
+                    <div className="w-2 h-2 rounded-full bg-chart-4 mt-1.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Logical Consistency</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Verify document flow and coherence</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {(hasResults || isValidating) && (
-          <div className="space-y-4">
-            {results.map((result, index) => (
-              <ValidationResultCard 
-                key={`result-${result.chunkIndex}-${index}`}
-                result={result}
-                totalChunks={totalChunks}
-              />
-            ))}
-            
-            {/* Loading Indicator for Current Chunk */}
+          // Enhanced Results Container with Modern Card Design
+          <div className="space-y-5">
+            {/* Enhanced Error Messages */}
+            {hasErrors && (
+              <div className="bg-gradient-to-r from-red-50 to-red-50/50 border-2 border-red-200 rounded-xl p-5 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-base font-bold text-red-900 mb-2">Validation Errors</h4>
+                    <div className="space-y-2">
+                      {results.filter(r => r.error).map((result, idx) => (
+                        <div key={`error-${idx}`} className="bg-white/60 rounded-lg p-3 border border-red-200">
+                          <p className="text-sm font-medium text-red-800">
+                            <span className="font-bold">Section {result.chunkIndex + 1}:</span> {result.error}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Enhanced Container with All Issues Grouped by Severity */}
+            {totalIssuesCount > 0 && (
+              <div className="bg-card border-2 border-border rounded-xl shadow-lg overflow-hidden">
+                {/* Enhanced Container Header with Summary Statistics */}
+                <div className="px-6 py-4 border-b-2 border-border bg-gradient-to-r from-muted/40 to-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-foreground mb-1">
+                        Detected Issues
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        {totalIssuesCount} {totalIssuesCount === 1 ? 'issue' : 'issues'} requiring attention
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {highCount > 0 && (
+                        <div className="px-3 py-1.5 bg-gradient-to-br from-red-50 to-red-100 text-red-800 text-xs font-bold rounded-lg border-2 border-red-200 shadow-sm">
+                          <span className="block text-[10px] text-red-600 mb-0.5">HIGH</span>
+                          <span className="text-sm">{highCount}</span>
+                        </div>
+                      )}
+                      {mediumCount > 0 && (
+                        <div className="px-3 py-1.5 bg-gradient-to-br from-amber-50 to-amber-100 text-amber-800 text-xs font-bold rounded-lg border-2 border-amber-200 shadow-sm">
+                          <span className="block text-[10px] text-amber-600 mb-0.5">MEDIUM</span>
+                          <span className="text-sm">{mediumCount}</span>
+                        </div>
+                      )}
+                      {lowCount > 0 && (
+                        <div className="px-3 py-1.5 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 text-xs font-bold rounded-lg border-2 border-blue-200 shadow-sm">
+                          <span className="block text-[10px] text-blue-600 mb-0.5">LOW</span>
+                          <span className="text-sm">{lowCount}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Enhanced Container Content - Issues Grouped by Severity */}
+                <div className="p-6 space-y-7">
+                  {/* High Priority Issues Section */}
+                  {highCount > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 pb-2">
+                        <div className="flex items-center gap-2 flex-1">
+                          <div className="w-1.5 h-8 bg-gradient-to-b from-red-500 to-red-600 rounded-full shadow-sm" />
+                          <div>
+                            <h4 className="text-base font-bold text-red-900 leading-tight">
+                              High Priority
+                            </h4>
+                            <p className="text-xs text-red-700 mt-0.5">
+                              {highCount} {highCount === 1 ? 'issue' : 'issues'} requiring immediate attention
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {groupedIssues.high.map((issue, idx) => (
+                          <IssueCard 
+                            key={issue.id || `high-issue-${idx}`} 
+                            issue={issue}
+                            isSelected={selectedIssueId === issue.id}
+                            onClick={() => onIssueClick?.(issue)}
+                            issueRefs={issueRefs}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medium Priority Issues Section */}
+                  {mediumCount > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 pb-2">
+                        <div className="flex items-center gap-2 flex-1">
+                          <div className="w-1.5 h-8 bg-gradient-to-b from-amber-500 to-amber-600 rounded-full shadow-sm" />
+                          <div>
+                            <h4 className="text-base font-bold text-amber-900 leading-tight">
+                              Medium Priority
+                            </h4>
+                            <p className="text-xs text-amber-700 mt-0.5">
+                              {mediumCount} {mediumCount === 1 ? 'issue' : 'issues'} to consider
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {groupedIssues.medium.map((issue, idx) => (
+                          <IssueCard 
+                            key={issue.id || `medium-issue-${idx}`} 
+                            issue={issue}
+                            isSelected={selectedIssueId === issue.id}
+                            onClick={() => onIssueClick?.(issue)}
+                            issueRefs={issueRefs}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Low Priority Issues Section */}
+                  {lowCount > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 pb-2">
+                        <div className="flex items-center gap-2 flex-1">
+                          <div className="w-1.5 h-8 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full shadow-sm" />
+                          <div>
+                            <h4 className="text-base font-bold text-blue-900 leading-tight">
+                              Low Priority
+                            </h4>
+                            <p className="text-xs text-blue-700 mt-0.5">
+                              {lowCount} {lowCount === 1 ? 'suggestion' : 'suggestions'} for improvement
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {groupedIssues.low.map((issue, idx) => (
+                          <IssueCard 
+                            key={issue.id || `low-issue-${idx}`} 
+                            issue={issue}
+                            isSelected={selectedIssueId === issue.id}
+                            onClick={() => onIssueClick?.(issue)}
+                            issueRefs={issueRefs}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Enhanced No Issues Found - Success Message */}
+            {hasResults && totalIssuesCount === 0 && !hasErrors && !isValidating && (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl p-8 shadow-sm">
+                <div className="flex flex-col items-center text-center">
+                  <div className="relative w-20 h-20 mb-6">
+                    <div className="absolute inset-0 bg-green-500/20 rounded-full animate-pulse" />
+                    <div className="relative w-20 h-20 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center shadow-lg">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                      </svg>
+                    </div>
+                  </div>
+                  
+                  <h3 className="text-2xl font-bold text-green-900 mb-3">
+                    {dict.docValidation.noIssuesFound}
+                  </h3>
+                  <p className="text-base text-green-800 leading-relaxed max-w-md">
+                    Your document appears to be well-written with no significant issues detected. Great work!
+                  </p>
+                  
+                  <div className="mt-6 flex items-center gap-2 px-4 py-2 bg-white/60 rounded-lg border border-green-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+                    </svg>
+                    <span className="text-sm font-medium text-green-800">Document validation complete</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Enhanced Loading Indicator for Current Chunk */}
             {isValidating && (
-              <div className="bg-card border-2 border-border rounded-lg p-6 shadow-sm animate-pulse">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  <div>
-                    <p className="font-medium text-foreground">
+              <div className="bg-gradient-to-br from-card to-card/50 border-2 border-border rounded-xl p-6 shadow-lg">
+                <div className="flex items-center gap-4">
+                  <div className="relative w-12 h-12 flex-shrink-0">
+                    <div className="absolute inset-0 border-4 border-primary/20 rounded-full" />
+                    <div className="absolute inset-0 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                    <div className="absolute inset-2 bg-primary/10 rounded-full animate-pulse" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-bold text-foreground mb-1">
                       {dict.docValidation.validating}
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {formatChunkProgress(currentChunk, totalChunks, dict.docValidation.chunkProgress)}
                     </p>
+                    <div className="mt-3 w-full bg-muted/50 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-gradient-to-r from-primary to-accent h-full rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${totalChunks > 0 ? (currentChunk / totalChunks) * 100 : 0}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -163,161 +465,31 @@ const ValidationResultPanel = ({
   );
 };
 
-// Validation Result Card Component - Displays structured JSON results
-const ValidationResultCard = ({ 
-  result, 
-  totalChunks 
+
+// Enhanced Issue Card Component - Modern, elegant display of individual validation issues
+const IssueCard = ({ 
+  issue, 
+  isSelected = false, 
+  onClick,
+  issueRefs,
 }: { 
-  result: ValidationResult;
-  totalChunks: number;
+  issue: ValidationIssue;
+  isSelected?: boolean;
+  onClick?: () => void;
+  issueRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }) => {
-  const dict = getDictionary('en');
-  const hasError = !!result.error;
-  const hasIssues = result.issues.length > 0;
-
-  // Log card rendering for debugging
-  useEffect(() => {
-    logger.debug('Rendering validation result card', {
-      chunkIndex: result.chunkIndex,
-      issuesCount: result.issues.length,
-      hasError,
-    }, 'ValidationResultCard');
-  }, [result.chunkIndex, result.issues.length, hasError]);
-
-  return (
-    <div className={`bg-card border-2 rounded-lg shadow-sm transition-all duration-200 ${
-      hasError ? 'border-red-500' : hasIssues ? 'border-border hover:border-primary' : 'border-green-500'
-    }`}>
-      {/* Card Header */}
-      <div className={`px-4 py-3 border-b-2 flex items-center justify-between rounded-t-lg ${
-        hasError ? 'bg-red-50 border-red-200' : hasIssues ? 'bg-muted/30 border-border' : 'bg-green-50 border-green-200'
-      }`}>
-        <div className="flex items-center gap-3">
-          <div className={`w-2.5 h-2.5 rounded-full ${
-            hasError ? 'bg-red-500' : hasIssues ? 'bg-amber-500' : 'bg-green-500'
-          }`} />
-          <span className="text-sm font-semibold text-foreground">
-            {totalChunks > 1 
-              ? `Section ${result.chunkIndex + 1} of ${totalChunks}`
-              : 'Validation Result'
-            }
-          </span>
-          {hasIssues && !hasError && (
-            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-medium rounded">
-              {result.issues.length} {result.issues.length === 1 ? 'issue' : 'issues'}
-            </span>
-          )}
-        </div>
-        <span className="text-xs text-muted-foreground">
-          {result.timestamp.toLocaleTimeString()}
-        </span>
-      </div>
-
-      {/* Card Content */}
-      <div className="p-4">
-        {hasError ? (
-          // Error Display
-          <div className="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <p className="text-sm text-red-700 flex-1">{result.error}</p>
-          </div>
-        ) : !hasIssues ? (
-          // No Issues Display
-          <div className="flex items-start gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-green-700 mb-1">
-                {dict.docValidation.noIssuesFound}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                This section appears to be well-written with no significant issues detected.
-              </p>
-            </div>
-          </div>
-        ) : (
-          // Issues Display - Structured and Elegant
-          <div className="space-y-3">
-            {/* Summary Stats */}
-            {result.summary && (
-              <div className="flex flex-wrap gap-2 pb-3 border-b border-border">
-                {result.summary.grammarCount > 0 && (
-                  <StatBadge 
-                    label="Grammar" 
-                    count={result.summary.grammarCount} 
-                    color="blue"
-                  />
-                )}
-                {result.summary.wordUsageCount > 0 && (
-                  <StatBadge 
-                    label="Word Usage" 
-                    count={result.summary.wordUsageCount} 
-                    color="purple"
-                  />
-                )}
-                {result.summary.punctuationCount > 0 && (
-                  <StatBadge 
-                    label="Punctuation" 
-                    count={result.summary.punctuationCount} 
-                    color="pink"
-                  />
-                )}
-                {result.summary.logicCount > 0 && (
-                  <StatBadge 
-                    label="Logic" 
-                    count={result.summary.logicCount} 
-                    color="orange"
-                  />
-                )}
-              </div>
-            )}
-            
-            {/* Individual Issues */}
-            <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-              {result.issues.map((issue, idx) => (
-                <IssueCard key={issue.id || `issue-${idx}`} issue={issue} />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Stat Badge Component
-const StatBadge = ({ label, count, color }: { label: string; count: number; color: string }) => {
-  const colorClasses = {
-    blue: 'bg-blue-100 text-blue-800 border-blue-200',
-    purple: 'bg-purple-100 text-purple-800 border-purple-200',
-    pink: 'bg-pink-100 text-pink-800 border-pink-200',
-    orange: 'bg-orange-100 text-orange-800 border-orange-200',
-  };
-
-  return (
-    <div className={`px-2.5 py-1 border rounded-md text-xs font-medium ${colorClasses[color as keyof typeof colorClasses]}`}>
-      {label}: {count}
-    </div>
-  );
-};
-
-// Issue Card Component - Elegant display of individual validation issues
-const IssueCard = ({ issue }: { issue: ValidationIssue }) => {
   const severityConfig = {
     high: {
-      bgColor: 'bg-red-50',
-      borderColor: 'border-red-200',
-      iconColor: 'text-red-500',
+      bgColor: 'bg-gradient-to-br from-red-50 to-red-50/50',
+      borderColor: 'border-l-red-500',
+      iconBgColor: 'bg-red-100',
+      iconColor: 'text-red-600',
       textColor: 'text-red-900',
+      labelBg: 'bg-red-100',
+      labelText: 'text-red-700',
       label: 'High',
       icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -325,27 +497,33 @@ const IssueCard = ({ issue }: { issue: ValidationIssue }) => {
       ),
     },
     medium: {
-      bgColor: 'bg-amber-50',
-      borderColor: 'border-amber-200',
-      iconColor: 'text-amber-500',
+      bgColor: 'bg-gradient-to-br from-amber-50 to-amber-50/50',
+      borderColor: 'border-l-amber-500',
+      iconBgColor: 'bg-amber-100',
+      iconColor: 'text-amber-600',
       textColor: 'text-amber-900',
+      labelBg: 'bg-amber-100',
+      labelText: 'text-amber-700',
       label: 'Medium',
       icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           <line x1="12" y1="9" x2="12" y2="13" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
       ),
     },
     low: {
-      bgColor: 'bg-blue-50',
-      borderColor: 'border-blue-200',
-      iconColor: 'text-blue-500',
+      bgColor: 'bg-gradient-to-br from-blue-50 to-blue-50/50',
+      borderColor: 'border-l-blue-500',
+      iconBgColor: 'bg-blue-100',
+      iconColor: 'text-blue-600',
       textColor: 'text-blue-900',
+      labelBg: 'bg-blue-100',
+      labelText: 'text-blue-700',
       label: 'Low',
       icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M12 16v-4" />
           <path d="M12 8h.01" />
@@ -355,68 +533,155 @@ const IssueCard = ({ issue }: { issue: ValidationIssue }) => {
   };
 
   const categoryConfig = {
-    Grammar: { label: 'Grammar', color: 'bg-blue-100 text-blue-700' },
-    WordUsage: { label: 'Word Usage', color: 'bg-purple-100 text-purple-700' },
-    Punctuation: { label: 'Punctuation', color: 'bg-pink-100 text-pink-700' },
-    Logic: { label: 'Logic', color: 'bg-orange-100 text-orange-700' },
+    Grammar: { 
+      label: 'Grammar', 
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 7V4h16v3" />
+          <path d="M9 20h6" />
+          <path d="M12 4v16" />
+        </svg>
+      )
+    },
+    WordUsage: { 
+      label: 'Word Usage',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+        </svg>
+      )
+    },
+    Punctuation: { 
+      label: 'Punctuation',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="12" cy="5" r="1" />
+          <circle cx="12" cy="19" r="1" />
+        </svg>
+      )
+    },
+    Logic: { 
+      label: 'Logic',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+      )
+    },
   };
 
   const severity = severityConfig[issue.severity];
   const category = categoryConfig[issue.category];
 
   return (
-    <div className={`p-3 border-l-4 ${severity.borderColor} ${severity.bgColor} rounded-r transition-all duration-200 hover:shadow-md`}>
-      {/* Issue Header */}
-      <div className="flex items-start gap-2 mb-2">
-        <div className={`${severity.iconColor} flex-shrink-0 mt-0.5`}>
-          {severity.icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className={`px-2 py-0.5 text-xs font-semibold rounded ${category.color}`}>
-              {category.label}
-            </span>
-            <span className={`px-2 py-0.5 text-xs font-medium rounded ${severity.bgColor} ${severity.textColor}`}>
-              {severity.label}
-            </span>
-            {issue.lineNumber && (
-              <span className="text-xs text-muted-foreground">
-                Line {issue.lineNumber}
-              </span>
-            )}
+    <div 
+      ref={(el) => {
+        if (el) {
+          issueRefs.current.set(issue.id, el);
+        }
+      }}
+      onClick={() => {
+        logger.info('Issue card clicked', { issueId: issue.id, category: issue.category, severity: issue.severity }, 'IssueCard');
+        onClick?.();
+      }}
+      className={`group relative bg-white border-l-4 ${severity.borderColor} rounded-lg shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer overflow-hidden ${
+        isSelected ? 'ring-2 ring-primary shadow-lg scale-[1.02]' : ''
+      }`}
+      style={{
+        animation: isSelected ? 'pulse 0.5s ease-in-out' : 'none',
+      }}
+    >
+      <div className={`absolute inset-0 ${severity.bgColor} opacity-50`} />
+      
+      <div className="relative px-4 pt-5 pb-4">
+        {/* Issue Header */}
+        <div className="flex items-start gap-3 mb-3">
+          <div className={`w-9 h-9 rounded-lg ${severity.iconBgColor} flex items-center justify-center flex-shrink-0 shadow-sm`}>
+            <div className={severity.iconColor}>
+              {severity.icon}
+            </div>
           </div>
           
-          {/* Issue Description */}
-          <p className={`text-sm font-medium ${severity.textColor} mb-2`}>
-            {issue.issue}
-          </p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-md ${severity.labelBg} ${severity.labelText} border border-current/20`}>
+                {category.icon}
+                <span>{category.label}</span>
+              </div>
+              {issue.lineNumber && (
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-muted/50 text-muted-foreground text-xs font-medium rounded">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span>Line {issue.lineNumber}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Issue Description */}
+            <h5 className={`text-sm font-bold ${severity.textColor} leading-relaxed mb-3`}>
+              {issue.issue}
+            </h5>
+          </div>
+        </div>
+        
+        {/* Content Sections */}
+        <div className="space-y-3 ml-12">
+          {/* Original Text */}
+          {issue.originalText && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                Original Text
+              </p>
+              <div className="bg-white border-2 border-border rounded-lg p-3 shadow-sm">
+                <code className="text-xs text-foreground font-mono leading-relaxed break-words">
+                  {issue.originalText}
+                </code>
+              </div>
+            </div>
+          )}
           
           {/* Location */}
           {issue.location && (
-            <div className="mb-2">
-              <p className="text-xs text-muted-foreground mb-1">Found in:</p>
-              <code className="block px-2 py-1.5 bg-white/70 border border-border rounded text-xs text-foreground break-words">
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                Location
+              </p>
+              <p className="text-xs text-foreground/80 italic leading-relaxed">
                 {issue.location}
-              </code>
+              </p>
             </div>
           )}
           
           {/* Suggestion */}
           {issue.suggestion && (
-            <div className="mt-2 pt-2 border-t border-border/50">
-              <div className="flex items-start gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                </svg>
-                <div className="flex-1">
-                  <p className="text-xs font-medium text-green-700 mb-0.5">Suggestion:</p>
-                  <p className="text-xs text-green-800">{issue.suggestion}</p>
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-3 shadow-sm">
+              <div className="flex items-start gap-2.5">
+                <div className="w-6 h-6 rounded-md bg-green-100 flex items-center justify-center flex-shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-green-900 mb-1 uppercase tracking-wide">
+                    Suggested Fix
+                  </p>
+                  <p className="text-sm text-green-800 leading-relaxed font-medium">
+                    {issue.suggestion}
+                  </p>
                 </div>
               </div>
             </div>
           )}
         </div>
       </div>
+      
+      {/* Hover Indicator */}
+      <div className="absolute top-0 right-0 w-2 h-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
     </div>
   );
 };

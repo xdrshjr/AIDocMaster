@@ -440,6 +440,7 @@ For each issue you find, provide:
 - category: one of "Grammar", "WordUsage", "Punctuation", or "Logic"
 - severity: "high", "medium", or "low"
 - location: a brief description of where the issue occurs
+- originalText: the exact text snippet from the document that contains the issue (extract at least 20-50 characters for context)
 - issue: a clear description of the problem
 - suggestion: a specific recommendation for improvement
 
@@ -451,6 +452,7 @@ Return your response as a valid JSON object with this exact structure:
       "category": "Grammar",
       "severity": "high",
       "location": "First paragraph",
+      "originalText": "The exact text from document with the issue",
       "issue": "Description of the issue",
       "suggestion": "Specific suggestion to fix it"
     }
@@ -464,7 +466,7 @@ Return your response as a valid JSON object with this exact structure:
   }
 }
 
-Important: Return ONLY the JSON object, no additional text or explanations. If no issues are found, return an empty issues array with all counts set to 0.'''
+Important: Return ONLY the JSON object, no additional text or explanations. If no issues are found, return an empty issues array with all counts set to 0. The originalText field is REQUIRED for each issue to enable document highlighting.'''
         }
         
         user_message = {

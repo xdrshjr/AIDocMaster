@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
-import WordEditorPanel from './WordEditorPanel';
+import WordEditorPanel, { type WordEditorPanelRef } from './WordEditorPanel';
 import ValidationResultPanel from './ValidationResultPanel';
 import { buildApiUrl } from '@/lib/apiConfig';
 
@@ -16,6 +16,7 @@ export interface ValidationIssue {
   category: 'Grammar' | 'WordUsage' | 'Punctuation' | 'Logic';
   severity: 'high' | 'medium' | 'low';
   location: string;
+  originalText: string; // Original text snippet from the document
   issue: string;
   suggestion: string;
   lineNumber?: number;
@@ -66,16 +67,154 @@ const AIDocValidationContainer = ({
   const [totalChunks, setTotalChunks] = useState(0);
   const [hasDocument, setHasDocument] = useState(false);
   
-  // Reference to WordEditorPanel to get content
-  const wordEditorRef = useRef<{ getContent: () => string } | null>(null);
+  // Bidirectional sync state
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  
+  // Reference to WordEditorPanel to get content and control highlighting
+  const wordEditorRef = useRef<WordEditorPanelRef>(null);
+
+  // Callback to clear validation results when new document is uploaded
+  const handleDocumentUpload = () => {
+    logger.info('New document uploaded, clearing validation results', undefined, 'AIDocValidationContainer');
+    
+    // Clear validation results
+    onValidationResultsChange([]);
+    
+    // Clear highlights in editor
+    if (wordEditorRef.current) {
+      wordEditorRef.current.clearHighlights();
+    }
+    
+    // Reset selected issue
+    setSelectedIssueId(null);
+    
+    logger.debug('Validation results and highlights cleared', undefined, 'AIDocValidationContainer');
+  };
 
   useEffect(() => {
-    logger.component('AIDocValidationContainer', 'mounted', {
+    logger.info('AIDocValidationContainer component mounted', {
       hasValidationResults: validationResults.length > 0,
       validationResultsCount: validationResults.length,
       leftPanelWidth,
-    });
+    }, 'AIDocValidationContainer');
   }, []);
+
+  // Auto-highlight all issues when validation results change
+  useEffect(() => {
+    // Skip if no results or still validating
+    if (validationResults.length === 0 || isValidating) {
+      return;
+    }
+
+    // Skip if editor ref is not available
+    if (!wordEditorRef.current) {
+      logger.warn('WordEditorPanel ref not available for auto-highlighting', undefined, 'AIDocValidationContainer');
+      return;
+    }
+
+    logger.info('Auto-highlighting validation issues triggered', {
+      resultsCount: validationResults.length,
+      totalIssues: validationResults.reduce((sum, r) => sum + r.issues.length, 0),
+    }, 'AIDocValidationContainer');
+
+    // Collect all issues from all validation results
+    const allIssues: Array<{ originalText: string; id: string; chunkIndex: number; severity: 'high' | 'medium' | 'low' }> = [];
+    
+    validationResults.forEach((result) => {
+      result.issues.forEach((issue) => {
+        // Only add issues that have originalText for highlighting
+        if (issue.originalText) {
+          allIssues.push({
+            originalText: issue.originalText,
+            id: issue.id,
+            chunkIndex: issue.chunkIndex,
+            severity: issue.severity,
+          });
+        }
+      });
+    });
+
+    logger.debug('Collected issues for auto-highlighting', {
+      totalIssues: allIssues.length,
+      highPriority: allIssues.filter(i => i.severity === 'high').length,
+      mediumPriority: allIssues.filter(i => i.severity === 'medium').length,
+      lowPriority: allIssues.filter(i => i.severity === 'low').length,
+    }, 'AIDocValidationContainer');
+
+    // Clear existing highlights first
+    wordEditorRef.current.clearHighlights();
+
+    // Highlight all issues if any
+    if (allIssues.length > 0) {
+      // Small delay to ensure clear operation completes
+      setTimeout(() => {
+        if (wordEditorRef.current) {
+          wordEditorRef.current.highlightAllIssues(allIssues);
+          logger.success('Auto-highlighting completed', {
+            issuesHighlighted: allIssues.length,
+          }, 'AIDocValidationContainer');
+        }
+      }, 100);
+    } else {
+      logger.info('No issues with originalText found, skipping auto-highlight', undefined, 'AIDocValidationContainer');
+    }
+  }, [validationResults, isValidating]);
+
+  // Handle issue click from validation panel (right panel)
+  const handleIssueClick = (issue: ValidationIssue) => {
+    logger.info('Issue clicked in validation panel', {
+      issueId: issue.id,
+      chunkIndex: issue.chunkIndex,
+      severity: issue.severity,
+    }, 'AIDocValidationContainer');
+
+    if (!wordEditorRef.current) {
+      logger.warn('WordEditorPanel ref not available', undefined, 'AIDocValidationContainer');
+      return;
+    }
+
+    // Set selected issue for visual feedback (this will trigger scroll in ValidationResultPanel)
+    setSelectedIssueId(issue.id);
+
+    // Scroll to the highlighted issue in the left editor panel
+    logger.info('Scrolling to issue in left editor panel', { 
+      issueId: issue.id,
+      chunkIndex: issue.chunkIndex,
+    }, 'AIDocValidationContainer');
+    
+    const scrollSuccess = wordEditorRef.current.scrollToIssue(issue.id);
+    
+    if (scrollSuccess) {
+      logger.success('Successfully scrolled to issue in editor', {
+        issueId: issue.id,
+      }, 'AIDocValidationContainer');
+    } else {
+      logger.warn('Failed to scroll to issue in editor', {
+        issueId: issue.id,
+        possibleReason: 'Highlight may not exist or text not found',
+      }, 'AIDocValidationContainer');
+    }
+  };
+
+  // Handle highlight click from editor (left panel)
+  const handleHighlightClick = (issueId: string, chunkIndex: number) => {
+    logger.info('Highlight clicked in editor', {
+      issueId,
+      chunkIndex,
+    }, 'AIDocValidationContainer');
+
+    // Set selected issue to scroll validation panel
+    setSelectedIssueId(issueId);
+  };
+
+  // Clear highlights when validation starts
+  const handleValidationStart = () => {
+    if (wordEditorRef.current) {
+      logger.info('Clearing highlights before validation', undefined, 'AIDocValidationContainer');
+      wordEditorRef.current.clearHighlights();
+    }
+    setSelectedIssueId(null);
+  };
 
   const handleContentChange = (content: string) => {
     onContentChange?.(content);
@@ -127,6 +266,9 @@ const AIDocValidationContainer = ({
       textLength: textContent.length,
       totalChunks: chunks.length,
     }, 'AIDocValidationContainer');
+
+    // Clear highlights and reset state
+    handleValidationStart();
 
     setIsValidating(true);
     onValidationResultsChange([]);
@@ -604,6 +746,8 @@ const AIDocValidationContainer = ({
           ref={wordEditorRef}
           onContentChange={handleContentChange}
           onExportReady={handleExportReady}
+          onHighlightClick={handleHighlightClick}
+          onDocumentUpload={handleDocumentUpload}
         />
       </div>
 
@@ -652,6 +796,8 @@ const AIDocValidationContainer = ({
           isValidating={isValidating}
           currentChunk={currentChunk}
           totalChunks={totalChunks}
+          selectedIssueId={selectedIssueId}
+          onIssueClick={handleIssueClick}
         />
       </div>
     </div>
