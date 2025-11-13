@@ -9,6 +9,9 @@ import { logger } from '@/lib/logger';
 import { useEffect, useState, useRef } from 'react';
 import { Download, ChevronDown } from 'lucide-react';
 import SettingsDialog from './SettingsDialog';
+import LanguageSwitcher from './LanguageSwitcher';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { getDictionary } from '@/lib/i18n/dictionaries';
 import type { Task } from './Taskbar';
 
 interface HeaderProps {
@@ -36,12 +39,14 @@ interface MenuBarProps {
 }
 
 const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
   useEffect(() => {
-    logger.debug('MenuBar initialized', { tasksCount: tasks.length }, 'MenuBar');
-  }, [tasks.length]);
+    logger.debug('MenuBar initialized', { tasksCount: tasks.length, locale }, 'MenuBar');
+  }, [tasks.length, locale]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -104,7 +109,7 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
           aria-expanded={openMenu === 'task'}
           aria-haspopup="true"
         >
-          Task
+          {dict.header.menu.task}
           <ChevronDown className="w-3 h-3" />
         </button>
         {openMenu === 'task' && (
@@ -142,7 +147,7 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
           aria-expanded={openMenu === 'config'}
           aria-haspopup="true"
         >
-          Config
+          {dict.header.menu.config}
           <ChevronDown className="w-3 h-3" />
         </button>
         {openMenu === 'config' && (
@@ -152,7 +157,7 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
               className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
               aria-label="Model Config"
             >
-              Model Config
+              {dict.header.menu.modelConfig}
             </button>
           </div>
         )}
@@ -173,13 +178,13 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
           aria-expanded={openMenu === 'info'}
           aria-haspopup="true"
         >
-          Info
+          {dict.header.menu.info}
           <ChevronDown className="w-3 h-3" />
         </button>
         {openMenu === 'info' && (
           <div className="absolute top-full left-0 mt-1 bg-background border-2 border-border shadow-lg z-50 min-w-[180px]">
             <div className="px-4 py-2 text-sm text-muted-foreground">
-              Coming soon...
+              {dict.header.menu.comingSoon}
             </div>
           </div>
         )}
@@ -195,6 +200,8 @@ const Header = ({
   tasks = [],
   onTaskChange,
 }: HeaderProps) => {
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -203,8 +210,9 @@ const Header = ({
       showExport,
       exportDisabled,
       tasksCount: tasks.length,
+      locale,
     }, 'Header');
-  }, [showExport, exportDisabled, tasks.length]);
+  }, [showExport, exportDisabled, tasks.length, locale]);
 
   const handleExportClick = () => {
     logger.info('Export button clicked', undefined, 'Header');
@@ -237,8 +245,9 @@ const Header = ({
             onTaskChange={handleTaskChange}
           />
 
-          {/* Right: Export Button */}
+          {/* Right: Language Switcher & Export Button */}
           <div className="flex items-center gap-2">
+            <LanguageSwitcher />
             {showExport && (
               <button
                 onClick={handleExportClick}
@@ -247,7 +256,7 @@ const Header = ({
                 aria-label="Export Document"
               >
                 <Download className="w-3 h-3" />
-                <span className="font-medium">Export</span>
+                <span className="font-medium">{dict.header.export}</span>
               </button>
             )}
           </div>

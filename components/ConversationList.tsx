@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import { MessageSquare, Plus } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export interface Conversation {
   id: string;
@@ -31,7 +32,8 @@ const ConversationList = ({
   onSelectConversation,
   onNewConversation,
 }: ConversationListProps) => {
-  const dict = getDictionary('en');
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
 
   useEffect(() => {
     logger.component('ConversationList', 'mounted', {

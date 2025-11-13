@@ -10,6 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { formatChunkProgress } from '@/lib/documentUtils';
 import type { ValidationResult, ValidationIssue } from './AIDocValidationContainer';
 
@@ -30,7 +31,8 @@ const ValidationResultPanel = ({
   selectedIssueId = null,
   onIssueClick,
 }: ValidationResultPanelProps) => {
-  const dict = getDictionary('en');
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const resultsEndRef = useRef<HTMLDivElement>(null);
   const issueRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -166,7 +168,7 @@ const ValidationResultPanel = ({
                 </h2>
                 {hasResults && !isValidating && totalIssuesCount > 0 && (
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {totalIssuesCount} {totalIssuesCount === 1 ? 'issue' : 'issues'} detected
+                    {dict.docValidation.detected} {totalIssuesCount} {totalIssuesCount === 1 ? dict.docValidation.issue : dict.docValidation.issues}
                   </p>
                 )}
               </div>
@@ -193,7 +195,7 @@ const ValidationResultPanel = ({
                 <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <span className="text-sm font-semibold text-green-700">All Clear</span>
+              <span className="text-sm font-semibold text-green-700">{dict.docValidation.allClear}</span>
             </div>
           )}
         </div>
@@ -218,7 +220,7 @@ const ValidationResultPanel = ({
               </div>
               
               <h3 className="text-2xl font-bold text-foreground mb-3 tracking-tight">
-                Ready for AI Validation
+                {dict.docValidation.readyForValidation}
               </h3>
               <p className="text-base text-muted-foreground mb-8 leading-relaxed">
                 {dict.docValidation.validationPlaceholder}
@@ -232,7 +234,7 @@ const ValidationResultPanel = ({
                     </svg>
                   </div>
                   <p className="text-sm font-bold text-foreground">
-                    AI-Powered Document Analysis
+                    {dict.docValidation.aiPoweredAnalysis}
                   </p>
                 </div>
                 
@@ -240,32 +242,32 @@ const ValidationResultPanel = ({
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
                     <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Grammar & Spelling</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Detect and correct grammatical errors</p>
+                      <p className="text-sm font-medium text-foreground">{dict.docValidation.grammarSpelling}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{dict.docValidation.grammarSpellingDesc}</p>
                     </div>
                   </div>
                   
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
                     <div className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Word Usage & Vocabulary</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Improve word choice and clarity</p>
+                      <p className="text-sm font-medium text-foreground">{dict.docValidation.wordUsageVocabulary}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{dict.docValidation.wordUsageVocabularyDesc}</p>
                     </div>
                   </div>
                   
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
                     <div className="w-2 h-2 rounded-full bg-secondary mt-1.5 flex-shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Punctuation Correctness</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Ensure proper punctuation usage</p>
+                      <p className="text-sm font-medium text-foreground">{dict.docValidation.punctuationCorrectness}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{dict.docValidation.punctuationCorrectnessDesc}</p>
                     </div>
                   </div>
                   
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-background/50 hover:bg-background transition-colors">
                     <div className="w-2 h-2 rounded-full bg-chart-4 mt-1.5 flex-shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Logical Consistency</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Verify document flow and coherence</p>
+                      <p className="text-sm font-medium text-foreground">{dict.docValidation.logicalConsistency}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{dict.docValidation.logicalConsistencyDesc}</p>
                     </div>
                   </div>
                 </div>
@@ -289,12 +291,12 @@ const ValidationResultPanel = ({
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-base font-bold text-red-900 mb-2">Validation Errors</h4>
+                    <h4 className="text-base font-bold text-red-900 mb-2">{dict.docValidation.validationErrors}</h4>
                     <div className="space-y-2">
                       {results.filter(r => r.error).map((result, idx) => (
                         <div key={`error-${idx}`} className="bg-white/60 rounded-lg p-3 border border-red-200">
                           <p className="text-sm font-medium text-red-800">
-                            <span className="font-bold">Section {result.chunkIndex + 1}:</span> {result.error}
+                            <span className="font-bold">{dict.docValidation.section} {result.chunkIndex + 1}:</span> {result.error}
                           </p>
                         </div>
                       ))}
@@ -312,10 +314,10 @@ const ValidationResultPanel = ({
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-base font-bold text-foreground mb-1">
-                        Detected Issues
+                        {dict.docValidation.detectedIssues}
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        {totalIssuesCount} {totalIssuesCount === 1 ? 'issue' : 'issues'} requiring attention
+                        {totalIssuesCount} {totalIssuesCount === 1 ? dict.docValidation.issue : dict.docValidation.issues} {dict.docValidation.requiringAttention}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -351,10 +353,10 @@ const ValidationResultPanel = ({
                           <div className="w-1.5 h-8 bg-gradient-to-b from-red-500 to-red-600 rounded-full shadow-sm" />
                           <div>
                             <h4 className="text-base font-bold text-red-900 leading-tight">
-                              High Priority
+                              {dict.docValidation.highPriority}
                             </h4>
                             <p className="text-xs text-red-700 mt-0.5">
-                              {highCount} {highCount === 1 ? 'issue' : 'issues'} requiring immediate attention
+                              {highCount} {highCount === 1 ? dict.docValidation.issue : dict.docValidation.issues} {dict.docValidation.requiringImmediateAttention}
                             </p>
                           </div>
                         </div>
@@ -381,10 +383,10 @@ const ValidationResultPanel = ({
                           <div className="w-1.5 h-8 bg-gradient-to-b from-amber-500 to-amber-600 rounded-full shadow-sm" />
                           <div>
                             <h4 className="text-base font-bold text-amber-900 leading-tight">
-                              Medium Priority
+                              {dict.docValidation.mediumPriority}
                             </h4>
                             <p className="text-xs text-amber-700 mt-0.5">
-                              {mediumCount} {mediumCount === 1 ? 'issue' : 'issues'} to consider
+                              {mediumCount} {mediumCount === 1 ? dict.docValidation.issue : dict.docValidation.issues} {dict.docValidation.toConsider}
                             </p>
                           </div>
                         </div>
@@ -411,10 +413,10 @@ const ValidationResultPanel = ({
                           <div className="w-1.5 h-8 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full shadow-sm" />
                           <div>
                             <h4 className="text-base font-bold text-blue-900 leading-tight">
-                              Low Priority
+                              {dict.docValidation.lowPriority}
                             </h4>
                             <p className="text-xs text-blue-700 mt-0.5">
-                              {lowCount} {lowCount === 1 ? 'suggestion' : 'suggestions'} for improvement
+                              {lowCount} {lowCount === 1 ? dict.docValidation.suggestion : dict.docValidation.suggestions} {dict.docValidation.forImprovement}
                             </p>
                           </div>
                         </div>
@@ -454,14 +456,14 @@ const ValidationResultPanel = ({
                     {dict.docValidation.noIssuesFound}
                   </h3>
                   <p className="text-base text-green-800 leading-relaxed max-w-md">
-                    Your document appears to be well-written with no significant issues detected. Great work!
+                    {dict.docValidation.documentWellWritten}
                   </p>
                   
                   <div className="mt-6 flex items-center gap-2 px-4 py-2 bg-white/60 rounded-lg border border-green-200">
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
                     </svg>
-                    <span className="text-sm font-medium text-green-800">Document validation complete</span>
+                    <span className="text-sm font-medium text-green-800">{dict.docValidation.documentValidationComplete}</span>
                   </div>
                 </div>
               </div>
@@ -515,6 +517,8 @@ const IssueCard = ({
   onClick?: () => void;
   issueRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }) => {
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const severityConfig = {
     high: {
       bgColor: 'bg-gradient-to-br from-red-50 to-red-50/50',
@@ -571,7 +575,7 @@ const IssueCard = ({
 
   const categoryConfig = {
     Grammar: { 
-      label: 'Grammar', 
+      label: dict.docValidation.categoryGrammar, 
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M4 7V4h16v3" />
@@ -581,7 +585,7 @@ const IssueCard = ({
       )
     },
     WordUsage: { 
-      label: 'Word Usage',
+      label: dict.docValidation.categoryWordUsage,
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9" />
@@ -590,7 +594,7 @@ const IssueCard = ({
       )
     },
     Punctuation: { 
-      label: 'Punctuation',
+      label: dict.docValidation.categoryPunctuation,
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="1" />
@@ -600,7 +604,7 @@ const IssueCard = ({
       )
     },
     Logic: { 
-      label: 'Logic',
+      label: dict.docValidation.categoryLogic,
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="16 18 22 12 16 6" />
@@ -654,7 +658,7 @@ const IssueCard = ({
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                     <polyline points="14 2 14 8 20 8" />
                   </svg>
-                  <span>Line {issue.lineNumber}</span>
+                  <span>{locale === 'zh' ? `${dict.docValidation.line} ${issue.lineNumber} 行` : `${dict.docValidation.line} ${issue.lineNumber}`}</span>
                 </div>
               )}
             </div>
@@ -672,7 +676,7 @@ const IssueCard = ({
           {issue.originalText && (
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
-                Original Text
+                {dict.docValidation.originalText}
               </p>
               <div className="bg-white border-2 border-border rounded-lg p-3 shadow-sm">
                 <code className="text-xs text-foreground font-mono leading-relaxed break-words">
@@ -686,7 +690,7 @@ const IssueCard = ({
           {issue.location && (
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
-                Location
+                {dict.docValidation.location}
               </p>
               <p className="text-xs text-foreground/80 italic leading-relaxed">
                 {issue.location}
@@ -705,7 +709,7 @@ const IssueCard = ({
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-green-900 mb-1 uppercase tracking-wide">
-                    Suggested Fix
+                    {dict.docValidation.suggestedFix}
                   </p>
                   <p className="text-sm text-green-800 leading-relaxed font-medium">
                     {issue.suggestion}

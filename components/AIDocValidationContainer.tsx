@@ -16,6 +16,7 @@ import { logger } from '@/lib/logger';
 import WordEditorPanel, { type WordEditorPanelRef } from './WordEditorPanel';
 import ValidationResultPanel from './ValidationResultPanel';
 import { buildApiUrl } from '@/lib/apiConfig';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export interface ValidationIssue {
   id: string;
@@ -66,6 +67,9 @@ const AIDocValidationContainer = ({
 }: AIDocValidationContainerProps) => {
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Get current language from context
+  const { locale } = useLanguage();
   
   // Validation state (only temporary/local state)
   const [isValidating, setIsValidating] = useState(false);
@@ -296,6 +300,7 @@ const AIDocValidationContainer = ({
       textLength: textContent.length,
       totalChunks: chunks.length,
       existingResultsCount: validationResults.length,
+      language: locale,
       note: 'Validation results will be accumulated and sorted by severity',
     }, 'AIDocValidationContainer');
 
@@ -317,13 +322,18 @@ const AIDocValidationContainer = ({
         logger.debug('Validating chunk', {
           chunkIndex: i,
           chunkLength: chunks[i].length,
+          language: locale,
         }, 'AIDocValidationContainer');
 
         // Get appropriate API URL based on environment
         const apiUrl = await buildApiUrl('/api/document-validation');
-        logger.debug('Using API URL for validation', { apiUrl, chunkIndex: i }, 'AIDocValidationContainer');
+        logger.debug('Using API URL for validation', { 
+          apiUrl, 
+          chunkIndex: i,
+          language: locale,
+        }, 'AIDocValidationContainer');
 
-        // Call validation API
+        // Call validation API with language parameter
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -333,6 +343,7 @@ const AIDocValidationContainer = ({
             content: chunks[i],
             chunkIndex: i,
             totalChunks: chunks.length,
+            language: locale,
           }),
         });
 

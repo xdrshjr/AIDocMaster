@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./chat.css";
 import FloatingChatButton from "@/components/FloatingChatButton";
+import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 // Use system fonts for desktop build to avoid Google Fonts fetch issues
 const dmSans = {
@@ -27,8 +28,10 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${dmSans.variable} ${spaceMono.variable} antialiased`} suppressHydrationWarning>
-        {children}
-        <FloatingChatButton />
+        <LanguageProvider>
+          {children}
+          <FloatingChatButton />
+        </LanguageProvider>
       </body>
     </html>
   );

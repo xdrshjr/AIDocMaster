@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 // @ts-expect-error - mammoth types may not be fully available
 import mammoth from 'mammoth/mammoth.browser';
 
@@ -53,7 +54,8 @@ export interface WordEditorPanelRef {
 
 const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
   ({ onContentChange, onExportReady, onHighlightClick, onDocumentUpload }, ref) => {
-  const dict = getDictionary('en');
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const [isUploading, setIsUploading] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

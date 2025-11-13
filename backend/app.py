@@ -410,12 +410,18 @@ def document_validation():
         content = data.get('content')
         chunk_index = data.get('chunkIndex', 0)
         total_chunks = data.get('totalChunks', 1)
+        language = data.get('language', 'en')
         
         if not content or not isinstance(content, str):
             app.logger.warning(f'Invalid content in validation request: {type(content)}')
             return jsonify({'error': 'Content is required and must be a string'}), 400
         
-        app.logger.info(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, content length: {len(content)}, note: results will be accumulated and sorted by severity on frontend')
+        # Normalize language parameter
+        if language not in ['en', 'zh']:
+            app.logger.warning(f'Unsupported language "{language}" received, defaulting to English')
+            language = 'en'
+        
+        app.logger.info(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, content length: {len(content)}, language: {language}, note: results will be accumulated and sorted by severity on frontend')
         
         # Get and validate LLM configuration
         config = config_loader.get_llm_config()
@@ -425,10 +431,51 @@ def document_validation():
             app.logger.error(f'LLM configuration validation failed: {validation.get("error")}')
             return jsonify({'error': validation.get('error', 'Invalid LLM configuration')}), 500
         
-        # Prepare validation prompt
-        system_message = {
-            'role': 'system',
-            'content': '''You are an expert document validator and editor. Your task is to analyze document content and identify issues in four categories:
+        # Prepare language-specific validation prompt
+        if language == 'zh':
+            app.logger.debug(f'Using Chinese validation prompt for chunk {chunk_index + 1}')
+            system_content = '''你是一位专业的文档校验和编辑专家。你的任务是分析文档内容并识别以下四个类别的问题：
+
+1. Grammar（语法）：语法错误、动词时态问题、主谓一致性问题
+2. WordUsage（用词）：不当的词语选择、冗余、表达不清
+3. Punctuation（标点）：缺失或不正确的标点符号
+4. Logic（逻辑）：逻辑不一致、论述不清、缺少过渡
+
+对于你发现的每个问题，请提供：
+- id: 唯一标识符（使用格式："issue-{category}-{number}"）
+- category: "Grammar"、"WordUsage"、"Punctuation" 或 "Logic" 之一
+- severity: "high"、"medium" 或 "low"
+- location: 问题所在位置的简要描述
+- originalText: 文档中包含问题的确切文本片段（提取至少20-50个字符以提供上下文）
+- issue: 问题的清晰描述
+- suggestion: 改进的具体建议
+
+请以以下准确结构返回有效的JSON对象：
+{
+  "issues": [
+    {
+      "id": "issue-grammar-1",
+      "category": "Grammar",
+      "severity": "high",
+      "location": "第一段",
+      "originalText": "文档中存在问题的确切文本",
+      "issue": "问题描述",
+      "suggestion": "修复建议"
+    }
+  ],
+  "summary": {
+    "totalIssues": 5,
+    "grammarCount": 2,
+    "wordUsageCount": 1,
+    "punctuationCount": 1,
+    "logicCount": 1
+  }
+}
+
+重要提示：仅返回JSON对象，不要附加任何其他文本或解释。如果没有发现问题，请返回空的issues数组，所有计数设为0。originalText字段是必需的，以便在文档中进行高亮显示。请用中文描述所有的location、issue和suggestion字段。'''
+        else:
+            app.logger.debug(f'Using English validation prompt for chunk {chunk_index + 1}')
+            system_content = '''You are an expert document validator and editor. Your task is to analyze document content and identify issues in four categories:
 
 1. Grammar: grammatical errors, verb tense issues, subject-verb agreement
 2. WordUsage: incorrect word choice, redundancy, unclear phrasing
@@ -467,12 +514,24 @@ Return your response as a valid JSON object with this exact structure:
 }
 
 Important: Return ONLY the JSON object, no additional text or explanations. If no issues are found, return an empty issues array with all counts set to 0. The originalText field is REQUIRED for each issue to enable document highlighting.'''
+        
+        system_message = {
+            'role': 'system',
+            'content': system_content
         }
+        
+        # Prepare language-specific user message
+        if language == 'zh':
+            user_content = f'请校验以下文档内容（第 {chunk_index + 1} 段，共 {total_chunks} 段）：\n\n{content}'
+        else:
+            user_content = f'Please validate the following document content (chunk {chunk_index + 1} of {total_chunks}):\n\n{content}'
         
         user_message = {
             'role': 'user',
-            'content': f'Please validate the following document content (chunk {chunk_index + 1} of {total_chunks}):\n\n{content}'
+            'content': user_content
         }
+        
+        app.logger.info(f'Prepared language-specific prompts: language={language}, system_prompt_length={len(system_content)}, user_prompt_length={len(user_content)}')
         
         messages = [system_message, user_message]
         

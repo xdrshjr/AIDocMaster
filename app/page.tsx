@@ -8,13 +8,15 @@ import AIDocValidationContainer from '@/components/AIDocValidationContainer';
 import AIChatContainer from '@/components/AIChatContainer';
 import { FileCheck, MessageSquare } from 'lucide-react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { logger } from '@/lib/logger';
 import type { Conversation } from '@/components/ConversationList';
 import type { Message } from '@/components/ChatPanel';
 import type { ValidationResult } from '@/components/AIDocValidationContainer';
 
 export default function Home() {
-  const dict = getDictionary('en'); // Default to English
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   
   const [activeTaskId, setActiveTaskId] = useState('ai-chat');
   
@@ -30,8 +32,8 @@ export default function Home() {
   const [messagesMap, setMessagesMap] = useState<Map<string, Message[]>>(new Map());
 
   useEffect(() => {
-    logger.info('Home component mounted', { initialTask: activeTaskId }, 'Home');
-  }, []);
+    logger.info('Home component mounted', { initialTask: activeTaskId, locale }, 'Home');
+  }, [locale]);
 
   const tasks = [
     {

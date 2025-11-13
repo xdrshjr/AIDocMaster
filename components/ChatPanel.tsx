@@ -13,6 +13,7 @@ import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
@@ -36,7 +37,8 @@ const ChatPanel = ({
   onMessagesMapChange,
   onMessagesChange 
 }: ChatPanelProps) => {
-  const dict = getDictionary('en');
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
