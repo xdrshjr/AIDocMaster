@@ -59,7 +59,10 @@ const ValidationResultPanel = ({
       const issueElement = issueRefs.current.get(selectedIssueId);
       
       if (issueElement) {
-        logger.info('Scrolling to selected issue', { issueId: selectedIssueId }, 'ValidationResultPanel');
+        logger.info('Scrolling right validation panel to selected issue', { 
+          issueId: selectedIssueId,
+          totalIssuesInRefs: issueRefs.current.size,
+        }, 'ValidationResultPanel');
         
         issueElement.scrollIntoView({
           behavior: 'smooth',
@@ -71,8 +74,17 @@ const ValidationResultPanel = ({
         setTimeout(() => {
           issueElement.style.animation = '';
         }, 500);
+        
+        logger.success('Successfully scrolled to issue in right panel', {
+          issueId: selectedIssueId,
+        }, 'ValidationResultPanel');
       } else {
-        logger.warn('Issue element not found for scrolling', { issueId: selectedIssueId }, 'ValidationResultPanel');
+        logger.warn('Issue element not found in refs for scrolling', { 
+          issueId: selectedIssueId,
+          availableRefs: Array.from(issueRefs.current.keys()).slice(0, 5),
+          totalRefs: issueRefs.current.size,
+          note: 'Issue may be in collapsed section or not yet rendered',
+        }, 'ValidationResultPanel');
       }
     }
   }, [selectedIssueId]);
@@ -88,6 +100,8 @@ const ValidationResultPanel = ({
   };
 
   // Collect all issues from all chunks and group by severity
+  // This maintains the original issue order within each severity group
+  // ensuring left-right panel synchronization works correctly
   results.forEach((result) => {
     result.issues.forEach((issue) => {
       groupedIssues[issue.severity].push(issue);
@@ -102,12 +116,35 @@ const ValidationResultPanel = ({
   // Check if there are any errors in results
   const hasErrors = results.some(r => r.error);
 
-  logger.debug('Grouped validation issues by severity', {
+  // Verify issue ID uniqueness
+  const allIssues = [...groupedIssues.high, ...groupedIssues.medium, ...groupedIssues.low];
+  const allIssueIds = allIssues.map(iss => iss.id);
+  const uniqueIssueIds = new Set(allIssueIds);
+  const hasDuplicateIds = allIssueIds.length !== uniqueIssueIds.size;
+
+  if (hasDuplicateIds) {
+    const idCounts = new Map<string, number>();
+    allIssueIds.forEach(id => idCounts.set(id, (idCounts.get(id) || 0) + 1));
+    const duplicates = Array.from(idCounts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([id, count]) => ({ id, count }));
+    
+    logger.error('Duplicate issue IDs found in display panel!', {
+      duplicates,
+      totalIssues: allIssueIds.length,
+      uniqueIssues: uniqueIssueIds.size,
+    }, 'ValidationResultPanel');
+  }
+
+  logger.debug('Grouped validation issues by severity for display', {
     highCount,
     mediumCount,
     lowCount,
     totalIssuesCount,
     resultsCount: results.length,
+    uniqueIssueIds: uniqueIssueIds.size,
+    allIdsUnique: !hasDuplicateIds,
+    note: 'Issues maintain original order within severity groups for left-right sync',
   }, 'ValidationResultPanel');
 
   return (

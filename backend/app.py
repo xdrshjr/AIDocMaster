@@ -402,7 +402,7 @@ def document_validation():
     
     # POST request - handle validation
     start_time = datetime.now()
-    app.logger.info('Document validation request received')
+    app.logger.info(f'Document validation request received')
     
     try:
         # Parse request body
@@ -415,7 +415,7 @@ def document_validation():
             app.logger.warning(f'Invalid content in validation request: {type(content)}')
             return jsonify({'error': 'Content is required and must be a string'}), 400
         
-        app.logger.debug(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, length: {len(content)}')
+        app.logger.info(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, content length: {len(content)}, note: results will be accumulated and sorted by severity on frontend')
         
         # Get and validate LLM configuration
         config = config_loader.get_llm_config()
@@ -515,20 +515,22 @@ Important: Return ONLY the JSON object, no additional text or explanations. If n
                         }).encode('utf-8')
                         return
                     
-                    app.logger.info(f'Streaming validation response started for chunk {chunk_index}')
+                    app.logger.info(f'Streaming validation response started for chunk {chunk_index + 1}/{total_chunks}')
                     chunk_count = 0
+                    total_bytes = 0
                     
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             chunk_count += 1
+                            total_bytes += len(chunk)
                             yield chunk
                             
                             # Log progress periodically
                             if chunk_count % 10 == 0:
-                                app.logger.debug(f'Validation stream progress: {chunk_count} chunks (doc chunk {chunk_index})')
+                                app.logger.debug(f'Validation stream progress: {chunk_count} stream chunks, {total_bytes} bytes (doc chunk {chunk_index + 1}/{total_chunks})')
                     
                     duration = (datetime.now() - start_time).total_seconds()
-                    app.logger.info(f'Validation stream completed for chunk {chunk_index}: {chunk_count} chunks in {duration:.2f}s')
+                    app.logger.info(f'Validation stream completed for chunk {chunk_index + 1}/{total_chunks}: {chunk_count} stream chunks, {total_bytes} bytes in {duration:.2f}s - Results will be accumulated and sorted on frontend')
             
             except requests.Timeout:
                 app.logger.error(f'Validation request timed out for chunk {chunk_index}')

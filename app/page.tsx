@@ -150,12 +150,26 @@ export default function Home() {
   }, []);
 
   // AI Doc Validation handlers
-  const handleValidationResultsChange = (results: ValidationResult[]) => {
-    logger.debug('Validation results updated', { 
-      resultsCount: results.length,
-      totalIssues: results.reduce((sum, r) => sum + r.issues.length, 0)
-    }, 'Home');
-    setValidationResults(results);
+  const handleValidationResultsChange = (results: ValidationResult[] | ((prev: ValidationResult[]) => ValidationResult[])) => {
+    if (typeof results === 'function') {
+      // Functional update
+      setValidationResults((prev) => {
+        const newResults = results(prev);
+        logger.debug('Validation results updated (functional)', { 
+          previousCount: prev.length,
+          newCount: newResults.length,
+          totalIssues: newResults.reduce((sum, r) => sum + r.issues.length, 0)
+        }, 'Home');
+        return newResults;
+      });
+    } else {
+      // Direct update
+      logger.debug('Validation results updated (direct)', { 
+        resultsCount: results.length,
+        totalIssues: results.reduce((sum, r) => sum + r.issues.length, 0)
+      }, 'Home');
+      setValidationResults(results);
+    }
   };
 
   const handleDocValidationPanelWidthChange = (width: number) => {

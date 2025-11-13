@@ -1,6 +1,12 @@
 /**
  * AIDocValidationContainer Component
  * Main container for AI Document Validation task with split-panel layout
+ * 
+ * Key Features:
+ * - Accumulates validation results from multiple LLM responses
+ * - Only clears results when a new document is uploaded
+ * - Supports re-running validation which appends new results to existing ones
+ * - Sorting by severity is handled at display layer (ValidationResultPanel) to maintain sync
  */
 
 'use client';
@@ -44,7 +50,7 @@ interface AIDocValidationContainerProps {
   onContentChange?: (content: string) => void;
   onExportReadyChange?: (ready: boolean) => void;
   validationResults: ValidationResult[];
-  onValidationResultsChange: (results: ValidationResult[]) => void;
+  onValidationResultsChange: (results: ValidationResult[] | ((prev: ValidationResult[]) => ValidationResult[])) => void;
   leftPanelWidth: number;
   onLeftPanelWidthChange: (width: number) => void;
 }
@@ -75,9 +81,17 @@ const AIDocValidationContainer = ({
 
   // Callback to clear validation results when new document is uploaded
   const handleDocumentUpload = () => {
-    logger.info('New document uploaded, clearing validation results', undefined, 'AIDocValidationContainer');
+    const previousResultsCount = validationResults.length;
+    const previousIssuesCount = validationResults.reduce((sum, r) => sum + r.issues.length, 0);
     
-    // Clear validation results
+    logger.info('New document uploaded, clearing all validation results', {
+      previousResultsCount,
+      previousIssuesCount,
+      action: 'clear_all',
+      reason: 'new_document_uploaded',
+    }, 'AIDocValidationContainer');
+    
+    // Clear validation results - ONLY cleared when new document is uploaded
     onValidationResultsChange([]);
     
     // Clear highlights in editor
@@ -88,7 +102,10 @@ const AIDocValidationContainer = ({
     // Reset selected issue
     setSelectedIssueId(null);
     
-    logger.debug('Validation results and highlights cleared', undefined, 'AIDocValidationContainer');
+    logger.success('Validation results and highlights cleared successfully', {
+      clearedResults: previousResultsCount,
+      clearedIssues: previousIssuesCount,
+    }, 'AIDocValidationContainer');
   };
 
   useEffect(() => {
@@ -162,14 +179,17 @@ const AIDocValidationContainer = ({
 
   // Handle issue click from validation panel (right panel)
   const handleIssueClick = (issue: ValidationIssue) => {
-    logger.info('Issue clicked in validation panel', {
+    logger.info('Issue clicked in right validation panel', {
       issueId: issue.id,
       chunkIndex: issue.chunkIndex,
       severity: issue.severity,
+      category: issue.category,
+      originalText: issue.originalText?.substring(0, 50) + '...',
+      action: 'scroll_left_editor',
     }, 'AIDocValidationContainer');
 
     if (!wordEditorRef.current) {
-      logger.warn('WordEditorPanel ref not available', undefined, 'AIDocValidationContainer');
+      logger.warn('WordEditorPanel ref not available for scrolling', undefined, 'AIDocValidationContainer');
       return;
     }
 
@@ -177,34 +197,44 @@ const AIDocValidationContainer = ({
     setSelectedIssueId(issue.id);
 
     // Scroll to the highlighted issue in the left editor panel
-    logger.info('Scrolling to issue in left editor panel', { 
+    logger.debug('Attempting to scroll left editor to issue', { 
       issueId: issue.id,
       chunkIndex: issue.chunkIndex,
+      hasOriginalText: !!issue.originalText,
     }, 'AIDocValidationContainer');
     
     const scrollSuccess = wordEditorRef.current.scrollToIssue(issue.id);
     
     if (scrollSuccess) {
-      logger.success('Successfully scrolled to issue in editor', {
+      logger.success('Successfully scrolled left editor to issue', {
         issueId: issue.id,
+        severity: issue.severity,
       }, 'AIDocValidationContainer');
     } else {
-      logger.warn('Failed to scroll to issue in editor', {
+      logger.warn('Failed to scroll left editor to issue', {
         issueId: issue.id,
-        possibleReason: 'Highlight may not exist or text not found',
+        possibleReason: 'Highlight may not exist or text not found in document',
+        hasOriginalText: !!issue.originalText,
       }, 'AIDocValidationContainer');
     }
   };
 
   // Handle highlight click from editor (left panel)
   const handleHighlightClick = (issueId: string, chunkIndex: number) => {
-    logger.info('Highlight clicked in editor', {
+    logger.info('Highlight clicked in left editor panel', {
       issueId,
       chunkIndex,
+      action: 'scroll_right_validation_panel',
     }, 'AIDocValidationContainer');
 
     // Set selected issue to scroll validation panel
+    // This will trigger useEffect in ValidationResultPanel to scroll to the issue
     setSelectedIssueId(issueId);
+    
+    logger.debug('Selected issue ID updated for right panel scrolling', {
+      issueId,
+      chunkIndex,
+    }, 'AIDocValidationContainer');
   };
 
   // Clear highlights when validation starts
@@ -265,13 +295,17 @@ const AIDocValidationContainer = ({
     logger.info('Starting document validation', {
       textLength: textContent.length,
       totalChunks: chunks.length,
+      existingResultsCount: validationResults.length,
+      note: 'Validation results will be accumulated and sorted by severity',
     }, 'AIDocValidationContainer');
 
-    // Clear highlights and reset state
+    // Clear highlights but DO NOT clear validation results
+    // Results should only be cleared when a new document is uploaded
     handleValidationStart();
 
     setIsValidating(true);
-    onValidationResultsChange([]);
+    // NOTE: We do NOT clear validation results here - they accumulate and get sorted by priority
+    // onValidationResultsChange([]); // REMOVED - results now accumulate
     setTotalChunks(chunks.length);
     setCurrentChunk(0);
 
@@ -558,6 +592,7 @@ const AIDocValidationContainer = ({
           }
 
           // Create validation issues with chunk index
+          // IMPORTANT: Add chunk index to issue ID to ensure uniqueness across chunks
           const issues: ValidationIssue[] = (validationData.issues || []).map((issue: ValidationIssue, idx: number) => {
             // Validate individual issue structure
             if (!issue.id || !issue.category || !issue.severity) {
@@ -570,19 +605,35 @@ const AIDocValidationContainer = ({
               }, 'AIDocValidationContainer');
             }
 
+            // Generate unique ID by adding chunk index prefix
+            // Original: "issue-grammar-1" → New: "chunk-0-issue-grammar-1"
+            const originalId = issue.id || `issue-${issue.category}-${idx}`;
+            const uniqueId = `chunk-${i}-${originalId}`;
+
+            logger.debug('Generated unique issue ID', {
+              chunkIndex: i,
+              issueIndex: idx,
+              originalId,
+              uniqueId,
+              category: issue.category,
+              severity: issue.severity,
+            }, 'AIDocValidationContainer');
+
             return {
               ...issue,
+              id: uniqueId, // Override with unique ID
               chunkIndex: i,
             };
           });
 
-          logger.debug('Mapped issues with chunk index', {
+          logger.info('Mapped issues with unique IDs and chunk index', {
             chunkIndex: i,
             issuesCount: issues.length,
+            sampleIssueIds: issues.slice(0, 3).map(iss => iss.id),
+            allIdsUnique: issues.length === new Set(issues.map(iss => iss.id)).size,
           }, 'AIDocValidationContainer');
 
           // Update validation results with parsed data
-          const existingIndex = validationResults.findIndex(r => r.chunkIndex === i);
           const newResult: ValidationResult = {
             chunkIndex: i,
             issues,
@@ -596,20 +647,69 @@ const AIDocValidationContainer = ({
             timestamp: new Date(),
           };
 
-          logger.info('Updating validation results state', {
+          logger.info('Appending validation result to accumulated results', {
             chunkIndex: i,
-            isUpdate: existingIndex >= 0,
-            previousResultsCount: validationResults.length,
             newIssuesCount: issues.length,
           }, 'AIDocValidationContainer');
 
-          if (existingIndex >= 0) {
-            const updated = [...validationResults];
-            updated[existingIndex] = newResult;
-            onValidationResultsChange(updated);
-          } else {
-            onValidationResultsChange([...validationResults, newResult]);
-          }
+          // Use functional update to avoid stale closure and ensure accumulation
+          onValidationResultsChange((prevResults) => {
+            // Check if result for this chunk already exists
+            const existingIndex = prevResults.findIndex(r => r.chunkIndex === i);
+            
+            let updatedResults: ValidationResult[];
+            if (existingIndex >= 0) {
+              // Replace existing result for this chunk
+              updatedResults = [...prevResults];
+              updatedResults[existingIndex] = newResult;
+              logger.debug('Replaced existing validation result for chunk', {
+                chunkIndex: i,
+                previousIssuesCount: prevResults[existingIndex].issues.length,
+                newIssuesCount: issues.length,
+              }, 'AIDocValidationContainer');
+            } else {
+              // Append new result
+              updatedResults = [...prevResults, newResult];
+              logger.debug('Appended new validation result', {
+                chunkIndex: i,
+                totalResultsNow: updatedResults.length,
+                newIssuesCount: issues.length,
+              }, 'AIDocValidationContainer');
+            }
+            
+            // Collect all issue IDs to verify uniqueness
+            const allIssueIds = updatedResults.flatMap(r => r.issues.map(iss => iss.id));
+            const uniqueIssueIds = new Set(allIssueIds);
+            const hasDuplicateIds = allIssueIds.length !== uniqueIssueIds.size;
+            
+            if (hasDuplicateIds) {
+              // Find duplicate IDs
+              const idCounts = new Map<string, number>();
+              allIssueIds.forEach(id => idCounts.set(id, (idCounts.get(id) || 0) + 1));
+              const duplicates = Array.from(idCounts.entries())
+                .filter(([, count]) => count > 1)
+                .map(([id]) => id);
+              
+              logger.error('Duplicate issue IDs detected!', {
+                duplicateIds: duplicates,
+                totalIssues: allIssueIds.length,
+                uniqueIssues: uniqueIssueIds.size,
+              }, 'AIDocValidationContainer');
+            }
+            
+            logger.info('Validation result accumulated (no sorting at data level)', {
+              totalResults: updatedResults.length,
+              totalIssues: updatedResults.reduce((sum, r) => sum + r.issues.length, 0),
+              uniqueIssueIds: uniqueIssueIds.size,
+              allIdsUnique: !hasDuplicateIds,
+              highPriorityIssues: updatedResults.reduce((sum, r) => sum + r.issues.filter(iss => iss.severity === 'high').length, 0),
+              mediumPriorityIssues: updatedResults.reduce((sum, r) => sum + r.issues.filter(iss => iss.severity === 'medium').length, 0),
+              lowPriorityIssues: updatedResults.reduce((sum, r) => sum + r.issues.filter(iss => iss.severity === 'low').length, 0),
+              note: 'Sorting handled by display layer (ValidationResultPanel)',
+            }, 'AIDocValidationContainer');
+            
+            return updatedResults;
+          });
 
         } catch (parseError) {
           logger.error('Failed to parse validation JSON result', {
@@ -622,20 +722,29 @@ const AIDocValidationContainer = ({
             parseDuration: `${Date.now() - parseStartTime}ms`,
           }, 'AIDocValidationContainer');
 
-          // Add error result
-          onValidationResultsChange([...validationResults, {
-            chunkIndex: i,
-            issues: [],
-            summary: {
-              totalIssues: 0,
-              grammarCount: 0,
-              wordUsageCount: 0,
-              punctuationCount: 0,
-              logicCount: 0,
-            },
-            timestamp: new Date(),
-            error: `Failed to parse validation result: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
-          }]);
+          // Add error result using functional update
+          onValidationResultsChange((prevResults) => {
+            const errorResult: ValidationResult = {
+              chunkIndex: i,
+              issues: [],
+              summary: {
+                totalIssues: 0,
+                grammarCount: 0,
+                wordUsageCount: 0,
+                punctuationCount: 0,
+                logicCount: 0,
+              },
+              timestamp: new Date(),
+              error: `Failed to parse validation result: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+            };
+            
+            logger.debug('Appending error result', {
+              chunkIndex: i,
+              previousResultsCount: prevResults.length,
+            }, 'AIDocValidationContainer');
+            
+            return [...prevResults, errorResult];
+          });
         }
 
         logger.success('Chunk validation completed', {
@@ -668,23 +777,32 @@ const AIDocValidationContainer = ({
         errorStack: error instanceof Error ? error.stack : undefined,
         currentChunk,
         totalChunks: chunks.length,
-        completedChunks: validationResults.length,
         errorType: error instanceof Error ? error.constructor.name : typeof error,
       }, 'AIDocValidationContainer');
       
-      onValidationResultsChange([...validationResults, {
-        chunkIndex: currentChunk,
-        issues: [],
-        summary: {
-          totalIssues: 0,
-          grammarCount: 0,
-          wordUsageCount: 0,
-          punctuationCount: 0,
-          logicCount: 0,
-        },
-        timestamp: new Date(),
-        error: `Error: ${error instanceof Error ? error.message : 'Validation failed'}`,
-      }]);
+      // Add error result using functional update
+      onValidationResultsChange((prevResults) => {
+        const errorResult: ValidationResult = {
+          chunkIndex: currentChunk,
+          issues: [],
+          summary: {
+            totalIssues: 0,
+            grammarCount: 0,
+            wordUsageCount: 0,
+            punctuationCount: 0,
+            logicCount: 0,
+          },
+          timestamp: new Date(),
+          error: `Error: ${error instanceof Error ? error.message : 'Validation failed'}`,
+        };
+        
+        logger.debug('Appending error result for validation failure', {
+          currentChunk,
+          previousResultsCount: prevResults.length,
+        }, 'AIDocValidationContainer');
+        
+        return [...prevResults, errorResult];
+      });
     } finally {
       logger.info('Validation process cleanup', {
         wasValidating: isValidating,
