@@ -52,13 +52,19 @@ export const getApiBaseUrl = async (): Promise<string> => {
 
 /**
  * Build full API URL for a given endpoint
+ * Ensures trailing slash for consistency with Next.js trailingSlash config
  */
 export const buildApiUrl = async (endpoint: string): Promise<string> => {
   const baseUrl = await getApiBaseUrl();
-  const url = `${baseUrl}${endpoint}`;
+  
+  // Ensure endpoint has trailing slash to match Next.js trailingSlash: true config
+  // This prevents 308 redirects in dev mode
+  const normalizedEndpoint = endpoint.endsWith('/') ? endpoint : `${endpoint}/`;
+  const url = `${baseUrl}${normalizedEndpoint}`;
   
   logger.debug('Built API URL', {
     endpoint,
+    normalizedEndpoint,
     baseUrl,
     fullUrl: url,
   }, 'APIConfig');
@@ -83,7 +89,7 @@ export const checkApiServerAvailability = async (): Promise<boolean> => {
     if (apiServerPort) {
       // Try to reach the health check endpoint
       try {
-        const response = await fetch(`http://localhost:${apiServerPort}/api/chat`, {
+        const response = await fetch(`http://localhost:${apiServerPort}/api/chat/`, {
           method: 'GET',
         });
         

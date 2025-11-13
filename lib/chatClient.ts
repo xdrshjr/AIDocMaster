@@ -33,7 +33,7 @@ export const getLLMConfigFromEnv = (): LLMConfig => {
     apiKey: process.env.LLM_API_KEY || '',
     apiUrl: process.env.LLM_API_URL || 'https://api.openai.com/v1',
     modelName: process.env.LLM_MODEL_NAME || 'gpt-4',
-    timeout: parseInt(process.env.LLM_API_TIMEOUT || '30000', 10),
+    timeout: parseInt(process.env.LLM_API_TIMEOUT || '60000', 10), // Increased to 60 seconds for more reliable streaming
   };
 
   logger.debug('LLM configuration loaded from environment', {
@@ -116,95 +116,202 @@ export const validateLLMConfig = (config: LLMConfig): { valid: boolean; error?: 
 };
 
 /**
- * Create chat completion with streaming support
+ * Check connection health by making a simple request
+ */
+export const checkConnectionHealth = async (config: LLMConfig): Promise<{ healthy: boolean; latency?: number; error?: string }> => {
+  const startTime = Date.now();
+  
+  logger.debug('Checking LLM API connection health', {
+    endpoint: config.apiUrl,
+  }, 'ChatClient');
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for health check
+
+    const response = await fetch(config.apiUrl, {
+      method: 'HEAD',
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    const latency = Date.now() - startTime;
+
+    if (response.ok || response.status === 404) { // 404 is acceptable for base URL
+      logger.success('LLM API connection healthy', {
+        latency: `${latency}ms`,
+      }, 'ChatClient');
+      return { healthy: true, latency };
+    }
+
+    logger.warn('LLM API connection unhealthy', {
+      status: response.status,
+      latency: `${latency}ms`,
+    }, 'ChatClient');
+    
+    return { 
+      healthy: false, 
+      latency,
+      error: `HTTP ${response.status}`,
+    };
+  } catch (error) {
+    const latency = Date.now() - startTime;
+    logger.warn('LLM API connection check failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      latency: `${latency}ms`,
+    }, 'ChatClient');
+    
+    return { 
+      healthy: false, 
+      latency,
+      error: error instanceof Error ? error.message : 'Connection failed',
+    };
+  }
+};
+
+/**
+ * Create chat completion with streaming support and retry mechanism
  * This function sends messages to OpenAI-compatible API and returns a streaming response
  */
 export const createStreamingChatCompletion = async (
   messages: ChatMessage[],
   config: LLMConfig,
-  onChunk?: (chunk: string) => void
+  onChunk?: (chunk: string) => void,
+  maxRetries: number = 2
 ): Promise<ReadableStream<Uint8Array>> => {
   const startTime = Date.now();
   
   logger.info('Creating streaming chat completion', {
     messageCount: messages.length,
     model: config.modelName,
+    maxRetries,
   }, 'ChatClient');
 
   const validation = validateLLMConfig(config);
   if (!validation.valid) {
+    logger.error('LLM config validation failed', { error: validation.error }, 'ChatClient');
     throw new Error(validation.error);
   }
 
-  try {
-    const endpoint = `${config.apiUrl.replace(/\/$/, '')}/chat/completions`;
-    
-    logger.debug('Sending request to LLM API', {
-      endpoint,
-      model: config.modelName,
-      messagesCount: messages.length,
-    }, 'ChatClient');
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const backoffDelay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+      logger.info('Retrying streaming request', {
+        attempt,
+        maxRetries,
+        backoffDelay: `${backoffDelay}ms`,
+      }, 'ChatClient');
+      
+      await new Promise(resolve => setTimeout(resolve, backoffDelay));
+    }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.timeout);
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
+    try {
+      const endpoint = `${config.apiUrl.replace(/\/$/, '')}/chat/completions`;
+      
+      logger.debug('Sending request to LLM API', {
+        endpoint,
         model: config.modelName,
-        messages,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 2000,
-      }),
-      signal: controller.signal,
-    });
+        messagesCount: messages.length,
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+      }, 'ChatClient');
 
-    clearTimeout(timeoutId);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), config.timeout);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.error('LLM API request failed', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorText,
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.modelName,
+          messages,
+          stream: true,
+          temperature: 0.7,
+          max_tokens: 2000,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error('LLM API request failed', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+          attempt: attempt + 1,
+          duration: `${Date.now() - startTime}ms`,
+        }, 'ChatClient');
+        
+        // Don't retry on 4xx errors (client errors) except 429 (rate limit)
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
+        }
+        
+        lastError = new Error(`LLM API error: ${response.status} ${response.statusText}`);
+        continue; // Retry on 5xx or 429
+      }
+
+      if (!response.body) {
+        lastError = new Error('Response body is empty');
+        logger.error('Response body is empty', {
+          attempt: attempt + 1,
+        }, 'ChatClient');
+        continue; // Retry
+      }
+
+      logger.success('Streaming chat completion started', {
         duration: `${Date.now() - startTime}ms`,
+        attempt: attempt + 1,
       }, 'ChatClient');
-      throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
-    }
 
-    if (!response.body) {
-      throw new Error('Response body is empty');
-    }
+      return response.body;
 
-    logger.success('Streaming chat completion started', {
-      duration: `${Date.now() - startTime}ms`,
-    }, 'ChatClient');
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.error('LLM API request timed out', {
+          timeout: config.timeout,
+          duration: `${duration}ms`,
+          attempt: attempt + 1,
+        }, 'ChatClient');
+        lastError = new Error('Request timed out');
+        continue; // Retry on timeout
+      }
 
-    return response.body;
-
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    
-    if (error instanceof Error && error.name === 'AbortError') {
-      logger.error('LLM API request timed out', {
-        timeout: config.timeout,
+      logger.error('Failed to create streaming chat completion', {
+        error: error instanceof Error ? error.message : 'Unknown error',
         duration: `${duration}ms`,
+        attempt: attempt + 1,
       }, 'ChatClient');
-      throw new Error('Request timed out');
+      
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+      
+      // Don't retry on network errors if this was the last attempt
+      if (attempt >= maxRetries) {
+        break;
+      }
     }
-
-    logger.error('Failed to create streaming chat completion', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      duration: `${duration}ms`,
-    }, 'ChatClient');
-    
-    throw error;
   }
+
+  // All retries exhausted
+  logger.error('All retry attempts exhausted', {
+    maxRetries,
+    totalDuration: `${Date.now() - startTime}ms`,
+    finalError: lastError?.message,
+  }, 'ChatClient');
+  
+  throw lastError || new Error('Failed to create streaming chat completion after retries');
 };
 
 /**

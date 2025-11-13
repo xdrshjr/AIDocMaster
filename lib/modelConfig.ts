@@ -24,7 +24,7 @@ export interface ModelConfigList {
 }
 
 const MODEL_CONFIG_KEY = 'docaimaster_model_configs';
-const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 60000; // Increased to 60 seconds for more reliable streaming
 
 /**
  * Check if running in Electron environment
@@ -528,6 +528,39 @@ export const getModelById = async (id: string): Promise<ModelConfig | null> => {
       id,
     }, 'ModelConfig');
     return null;
+  }
+};
+
+/**
+ * Clear all model configurations
+ */
+export const clearAllModels = async (): Promise<{ success: boolean; error?: string }> => {
+  logger.info('Clearing all model configurations', undefined, 'ModelConfig');
+
+  try {
+    const emptyConfigList: ModelConfigList = {
+      models: [],
+      defaultModelId: undefined,
+    };
+
+    // Save empty configuration
+    const saveResult = await saveModelConfigs(emptyConfigList);
+    
+    if (!saveResult.success) {
+      logger.error('Failed to clear all models', {
+        error: saveResult.error,
+      }, 'ModelConfig');
+      return { success: false, error: saveResult.error };
+    }
+
+    logger.success('All model configurations cleared successfully', undefined, 'ModelConfig');
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to clear all models', {
+      error: errorMessage,
+    }, 'ModelConfig');
+    return { success: false, error: errorMessage };
   }
 };
 

@@ -7,14 +7,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Save, Star, Power } from 'lucide-react';
+import { X, Plus, Trash2, Save, Star, Power, Edit, XCircle } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import {
   loadModelConfigs,
   addModelConfig,
+  updateModelConfig,
   deleteModelConfig,
   setDefaultModel,
   toggleModelEnabled,
+  clearAllModels,
   type ModelConfig,
   type ModelConfigList,
 } from '@/lib/modelConfig';
@@ -40,6 +42,10 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   const [formApiKey, setFormApiKey] = useState('');
   const [formModelName, setFormModelName] = useState('');
   const [isFormVisible, setIsFormVisible] = useState(false);
+  
+  // Edit mode state
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
 
   useEffect(() => {
     logger.component('SettingsDialog', 'mounted', { isOpen });
@@ -94,11 +100,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         }, 'SettingsDialog');
 
         setSuccess('Model added successfully!');
-        setFormName('');
-        setFormApiUrl('');
-        setFormApiKey('');
-        setFormModelName('');
-        setIsFormVisible(false);
+        handleResetForm();
         
         // Reload models and sync to cookies
         await handleLoadModels();
@@ -115,8 +117,130 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
     }
   };
 
+  const handleUpdateModel = async () => {
+    if (!editingModelId) {
+      logger.warn('No model ID for update', undefined, 'SettingsDialog');
+      return;
+    }
+
+    logger.info('Updating model', { id: editingModelId, name: formName }, 'SettingsDialog');
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const result = await updateModelConfig(editingModelId, {
+        name: formName.trim(),
+        apiUrl: formApiUrl.trim(),
+        apiKey: formApiKey.trim(),
+        modelName: formModelName.trim(),
+      });
+
+      if (result.success) {
+        logger.success('Model updated successfully', {
+          id: editingModelId,
+          name: formName,
+        }, 'SettingsDialog');
+
+        setSuccess('Model updated successfully!');
+        handleResetForm();
+        
+        // Reload models and sync to cookies
+        await handleLoadModels();
+        await syncModelConfigsToCookies();
+      } else {
+        throw new Error(result.error || 'Failed to update model');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update model';
+      logger.error('Failed to update model', { error: errorMessage, id: editingModelId }, 'SettingsDialog');
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleEditModel = (model: ModelConfig) => {
+    logger.info('Entering edit mode', { id: model.id, name: model.name }, 'SettingsDialog');
+    
+    setEditingModelId(model.id);
+    setIsEditMode(true);
+    setFormName(model.name);
+    setFormApiUrl(model.apiUrl);
+    setFormApiKey(model.apiKey);
+    setFormModelName(model.modelName);
+    setIsFormVisible(true);
+    setError('');
+    setSuccess('');
+  };
+
+  const handleSubmitForm = () => {
+    if (isEditMode) {
+      handleUpdateModel();
+    } else {
+      handleAddModel();
+    }
+  };
+
+  const handleResetForm = () => {
+    logger.debug('Resetting form', undefined, 'SettingsDialog');
+    
+    setFormName('');
+    setFormApiUrl('');
+    setFormApiKey('');
+    setFormModelName('');
+    setIsFormVisible(false);
+    setEditingModelId(null);
+    setIsEditMode(false);
+  };
+
+  const handleClearAllModels = async () => {
+    const modelCount = models.length;
+    
+    if (modelCount === 0) {
+      logger.info('No models to clear', undefined, 'SettingsDialog');
+      setError('No models to clear');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to clear all ${modelCount} model(s)? This action cannot be undone.`)) {
+      logger.debug('Clear all models cancelled by user', undefined, 'SettingsDialog');
+      return;
+    }
+
+    logger.info('Clearing all models', { count: modelCount }, 'SettingsDialog');
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const result = await clearAllModels();
+
+      if (result.success) {
+        logger.success('All models cleared successfully', { count: modelCount }, 'SettingsDialog');
+        setSuccess('All models cleared successfully!');
+        
+        // Reset form if it was open
+        handleResetForm();
+        
+        // Reload models and sync to cookies
+        await handleLoadModels();
+        await syncModelConfigsToCookies();
+      } else {
+        throw new Error(result.error || 'Failed to clear all models');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to clear all models';
+      logger.error('Failed to clear all models', { error: errorMessage }, 'SettingsDialog');
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleDeleteModel = async (id: string, name: string) => {
     if (!confirm(`Are you sure you want to delete the model "${name}"?`)) {
+      logger.debug('Delete model cancelled by user', { id, name }, 'SettingsDialog');
       return;
     }
 
@@ -206,11 +330,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
   const handleClose = () => {
     logger.info('Settings dialog closed', undefined, 'SettingsDialog');
-    setIsFormVisible(false);
-    setFormName('');
-    setFormApiUrl('');
-    setFormApiKey('');
-    setFormModelName('');
+    handleResetForm();
     setError('');
     setSuccess('');
     onClose();
@@ -218,18 +338,16 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
   const handleShowAddForm = () => {
     logger.debug('Showing add model form', undefined, 'SettingsDialog');
+    setIsEditMode(false);
+    setEditingModelId(null);
     setIsFormVisible(true);
     setError('');
     setSuccess('');
   };
 
-  const handleCancelAdd = () => {
-    logger.debug('Canceling add model form', undefined, 'SettingsDialog');
-    setIsFormVisible(false);
-    setFormName('');
-    setFormApiUrl('');
-    setFormApiKey('');
-    setFormModelName('');
+  const handleCancelForm = () => {
+    logger.debug('Canceling form', { isEditMode }, 'SettingsDialog');
+    handleResetForm();
     setError('');
   };
 
@@ -287,22 +405,36 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-bold text-foreground">LLM Models</h3>
                   {!isFormVisible && (
-                    <button
-                      onClick={handleShowAddForm}
-                      disabled={isLoading}
-                      className="px-4 py-2 bg-primary text-primary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      aria-label="Add Model"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span className="font-medium">Add Model</span>
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleClearAllModels}
+                        disabled={isLoading || models.length === 0}
+                        className="px-4 py-2 bg-destructive text-destructive-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        aria-label="Clear All Models"
+                        title="Clear All Models"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        <span className="font-medium">Clear All</span>
+                      </button>
+                      <button
+                        onClick={handleShowAddForm}
+                        disabled={isLoading}
+                        className="px-4 py-2 bg-primary text-primary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        aria-label="Add Model"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span className="font-medium">Add Model</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                {/* Add Model Form */}
+                {/* Add/Edit Model Form */}
                 {isFormVisible && (
                   <div className="mb-4 p-4 bg-card border-4 border-border shadow-sm">
-                    <h4 className="text-md font-bold text-foreground mb-3">Add New Model</h4>
+                    <h4 className="text-md font-bold text-foreground mb-3">
+                      {isEditMode ? 'Edit Model' : 'Add New Model'}
+                    </h4>
                     
                     <div className="space-y-3">
                       <div>
@@ -363,7 +495,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
                       <div className="flex gap-2 pt-2">
                         <button
-                          onClick={handleAddModel}
+                          onClick={handleSubmitForm}
                           disabled={
                             isLoading ||
                             !formName.trim() ||
@@ -374,10 +506,12 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                           className="px-4 py-2 bg-primary text-primary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                         >
                           <Save className="w-4 h-4" />
-                          <span className="font-medium">Save Model</span>
+                          <span className="font-medium">
+                            {isEditMode ? 'Update Model' : 'Save Model'}
+                          </span>
                         </button>
                         <button
-                          onClick={handleCancelAdd}
+                          onClick={handleCancelForm}
                           disabled={isLoading}
                           className="px-4 py-2 bg-muted text-foreground border-2 border-border hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -440,6 +574,15 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                             </div>
 
                             <div className="flex gap-2 ml-4">
+                              <button
+                                onClick={() => handleEditModel(model)}
+                                disabled={isLoading}
+                                className="p-2 bg-blue-600 text-white border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                aria-label="Edit Model"
+                                title="Edit Model"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </button>
                               <button
                                 onClick={() => handleToggleEnabled(model.id, model.name, model.isEnabled !== false)}
                                 disabled={isLoading}

@@ -17,6 +17,7 @@ const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const ElectronAPIServer = require('./api-server');
+const FlaskBackendManager = require('./flask-launcher');
 
 // Window configuration constants
 const WINDOW_CONFIG = {
@@ -96,6 +97,9 @@ const logger = new ElectronLogger();
 
 // Keep a global reference of the window object
 let mainWindow = null;
+
+// Flask backend manager instance
+let flaskBackend = null;
 
 // API server instance (for packaged mode only)
 let apiServer = null;
@@ -249,9 +253,39 @@ app.on('ready', async () => {
     isPackaged: app.isPackaged,
   });
 
+  // Start Flask backend first
+  logger.info('Starting Flask backend');
+  try {
+    flaskBackend = new FlaskBackendManager(app, logger);
+    const flaskResult = await flaskBackend.start();
+    
+    if (flaskResult.success) {
+      logger.success('Flask backend started successfully', {
+        port: flaskResult.port,
+        pid: flaskResult.pid,
+      });
+      
+      // Store Flask backend port for the API server and renderer process
+      global.flaskBackendPort = flaskResult.port;
+    } else {
+      logger.error('Failed to start Flask backend', {
+        error: flaskResult.error,
+      });
+      
+      // Continue without Flask backend - user will see errors when trying to use LLM features
+      global.flaskBackendPort = null;
+    }
+  } catch (error) {
+    logger.error('Exception starting Flask backend', {
+      error: error.message,
+      stack: error.stack,
+    });
+    global.flaskBackendPort = null;
+  }
+
   // Start API server in packaged mode
   if (app.isPackaged) {
-    logger.info('Running in packaged mode, starting API server');
+    logger.info('Running in packaged mode, starting Node.js API proxy server');
     
     try {
       apiServer = new ElectronAPIServer(app, logger);
@@ -312,6 +346,19 @@ app.on('activate', () => {
  */
 app.on('before-quit', async () => {
   logger.info('Application preparing to quit');
+
+  // Stop Flask backend first
+  if (flaskBackend) {
+    logger.info('Stopping Flask backend');
+    try {
+      await flaskBackend.stop();
+      logger.success('Flask backend stopped successfully');
+    } catch (error) {
+      logger.error('Error stopping Flask backend', {
+        error: error.message,
+      });
+    }
+  }
 
   // Stop API server if running
   if (apiServer) {
@@ -400,6 +447,30 @@ ipcMain.handle('get-api-server-port', () => {
     isPackaged: app.isPackaged,
   });
   return global.apiServerPort;
+});
+
+ipcMain.handle('get-flask-backend-port', () => {
+  logger.debug('IPC: get-flask-backend-port called', {
+    port: global.flaskBackendPort,
+  });
+  return global.flaskBackendPort;
+});
+
+ipcMain.handle('get-flask-backend-status', () => {
+  logger.debug('IPC: get-flask-backend-status called');
+  
+  if (flaskBackend) {
+    const status = flaskBackend.getStatus();
+    logger.debug('Flask backend status', status);
+    return status;
+  }
+  
+  return {
+    isRunning: false,
+    isStarting: false,
+    port: null,
+    pid: null,
+  };
 });
 
 /**

@@ -1,32 +1,64 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import Taskbar from '@/components/Taskbar';
 import AIDocValidationContainer from '@/components/AIDocValidationContainer';
-import { FileCheck } from 'lucide-react';
+import AIChatContainer from '@/components/AIChatContainer';
+import { FileCheck, MessageSquare } from 'lucide-react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { logger } from '@/lib/logger';
+import type { Conversation } from '@/components/ConversationList';
+import type { Message } from '@/components/ChatPanel';
+import type { ValidationResult } from '@/components/AIDocValidationContainer';
 
 export default function Home() {
   const dict = getDictionary('en'); // Default to English
   
-  const [tasks] = useState([
+  const [activeTaskId, setActiveTaskId] = useState('ai-chat');
+  
+  // AI Doc Validation state
+  const [editorContent, setEditorContent] = useState<string>('');
+  const [isExportReady, setIsExportReady] = useState(false);
+  const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
+  const [docValidationLeftPanelWidth, setDocValidationLeftPanelWidth] = useState(60);
+  
+  // AI Chat state
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [messagesMap, setMessagesMap] = useState<Map<string, Message[]>>(new Map());
+
+  useEffect(() => {
+    logger.info('Home component mounted', { initialTask: activeTaskId }, 'Home');
+  }, []);
+
+  const tasks = [
+    {
+      id: 'ai-chat',
+      title: dict.taskbar.aiChat,
+      icon: <MessageSquare className="w-4 h-4" />,
+      isActive: activeTaskId === 'ai-chat',
+    },
     {
       id: 'ai-doc-validation',
       title: dict.taskbar.aiDocValidation,
       icon: <FileCheck className="w-4 h-4" />,
-      isActive: true,
+      isActive: activeTaskId === 'ai-doc-validation',
     },
-  ]);
-
-  const [activeTaskId, setActiveTaskId] = useState('ai-doc-validation');
-  const [editorContent, setEditorContent] = useState<string>('');
-  const [isExportReady, setIsExportReady] = useState(false);
+  ];
 
   const handleTaskChange = (taskId: string) => {
-    logger.info('Active task changed', { taskId }, 'Home');
+    logger.info('Active task changed', { 
+      fromTask: activeTaskId, 
+      toTask: taskId,
+      preservedState: {
+        conversations: conversations.length,
+        messagesMapSize: messagesMap.size,
+        hasDocument: isExportReady,
+        validationResults: validationResults.length,
+      }
+    }, 'Home');
     setActiveTaskId(taskId);
   };
 
@@ -98,24 +130,71 @@ export default function Home() {
     }
   };
 
+  // AI Chat handlers
+  const handleConversationsChange = useCallback((newConversations: Conversation[]) => {
+    logger.debug('Conversations updated', { count: newConversations.length }, 'Home');
+    setConversations(newConversations);
+  }, []);
+
+  const handleActiveConversationChange = useCallback((conversationId: string | null) => {
+    logger.debug('Active conversation changed', { conversationId }, 'Home');
+    setActiveConversationId(conversationId);
+  }, []);
+
+  const handleMessagesMapChange = useCallback((newMessagesMap: Map<string, Message[]>) => {
+    logger.debug('Messages map updated', { 
+      conversationCount: newMessagesMap.size,
+      totalMessages: Array.from(newMessagesMap.values()).reduce((sum, msgs) => sum + msgs.length, 0)
+    }, 'Home');
+    setMessagesMap(newMessagesMap);
+  }, []);
+
+  // AI Doc Validation handlers
+  const handleValidationResultsChange = (results: ValidationResult[]) => {
+    logger.debug('Validation results updated', { 
+      resultsCount: results.length,
+      totalIssues: results.reduce((sum, r) => sum + r.issues.length, 0)
+    }, 'Home');
+    setValidationResults(results);
+  };
+
+  const handleDocValidationPanelWidthChange = (width: number) => {
+    setDocValidationLeftPanelWidth(width);
+  };
+
   return (
     <div className="h-screen flex flex-col">
       <Header 
-        title={dict.header.title}
         showExport={activeTaskId === 'ai-doc-validation'}
         onExport={handleExport}
         exportDisabled={!isExportReady}
+        tasks={tasks}
+        onTaskChange={handleTaskChange}
       />
       
       <div className="flex-1 flex overflow-hidden">
         <Taskbar tasks={tasks} onTaskChange={handleTaskChange} />
         
         <main className="flex-1 bg-background overflow-hidden">
+          {activeTaskId === 'ai-chat' && (
+            <AIChatContainer 
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              messagesMap={messagesMap}
+              onConversationsChange={handleConversationsChange}
+              onActiveConversationChange={handleActiveConversationChange}
+              onMessagesMapChange={handleMessagesMapChange}
+            />
+          )}
           {activeTaskId === 'ai-doc-validation' && (
             <AIDocValidationContainer 
               onExportRequest={handleExport}
               onContentChange={handleContentChange}
               onExportReadyChange={handleExportReadyChange}
+              validationResults={validationResults}
+              onValidationResultsChange={handleValidationResultsChange}
+              leftPanelWidth={docValidationLeftPanelWidth}
+              onLeftPanelWidthChange={handleDocValidationPanelWidthChange}
             />
           )}
         </main>

@@ -189,6 +189,92 @@ const electronAPI = {
       return null;
     }
   },
+
+  /**
+   * Get Flask backend port
+   */
+  getFlaskBackendPort: async () => {
+    try {
+      logger.debug('Calling getFlaskBackendPort');
+      const port = await ipcRenderer.invoke('get-flask-backend-port');
+      logger.debug('Flask backend port retrieved', { port });
+      return port;
+    } catch (error) {
+      logger.error('Failed to get Flask backend port', { error: error.message });
+      return null;
+    }
+  },
+
+  /**
+   * Get Flask backend status
+   */
+  getFlaskBackendStatus: async () => {
+    try {
+      logger.debug('Calling getFlaskBackendStatus');
+      const status = await ipcRenderer.invoke('get-flask-backend-status');
+      logger.debug('Flask backend status retrieved', { status });
+      return status;
+    } catch (error) {
+      logger.error('Failed to get Flask backend status', { error: error.message });
+      return {
+        isRunning: false,
+        isStarting: false,
+        port: null,
+        pid: null,
+      };
+    }
+  },
+
+  /**
+   * Get Flask backend logs
+   */
+  getFlaskLogs: async (lines = 100) => {
+    try {
+      logger.debug('Fetching Flask backend logs', { lines });
+      
+      const port = await ipcRenderer.invoke('get-api-server-port');
+      if (!port) {
+        logger.warn('API server not available for logs request');
+        return {
+          success: false,
+          error: 'API server not available',
+          logs: '',
+        };
+      }
+
+      const response = await fetch(`http://localhost:${port}/api/logs?lines=${lines}`);
+      const data = await response.json();
+      
+      if (response.ok) {
+        logger.info('Flask logs retrieved successfully', {
+          lines: data.returned_lines,
+        });
+        return {
+          success: true,
+          logs: data.content,
+          total_lines: data.total_lines,
+          returned_lines: data.returned_lines,
+          log_file: data.log_file,
+        };
+      } else {
+        logger.error('Failed to retrieve Flask logs', { error: data.error });
+        return {
+          success: false,
+          error: data.error || 'Unknown error',
+          logs: '',
+        };
+      }
+    } catch (error) {
+      logger.error('Exception while fetching Flask logs', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+        logs: '',
+      };
+    }
+  },
 };
 
 /**

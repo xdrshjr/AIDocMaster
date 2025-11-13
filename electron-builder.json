@@ -9,6 +9,7 @@
   "files": [
     "out/**/*",
     "electron/**/*",
+    "backend/**/*",
     "package.json"
   ],
   "extraMetadata": {
@@ -53,7 +54,17 @@
   "compression": "maximum",
   "asar": true,
   "asarUnpack": [
-    "**/*.node"
+    "**/*.node",
+    "backend/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "backend",
+      "to": "backend",
+      "filter": [
+        "**/*"
+      ]
+    }
   ]
 }
 

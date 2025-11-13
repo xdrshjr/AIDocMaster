@@ -42,6 +42,21 @@ interface ElectronAPI {
     error?: string;
   }>;
   getApiServerPort: () => Promise<number | null>;
+  getFlaskBackendPort: () => Promise<number | null>;
+  getFlaskBackendStatus: () => Promise<{
+    isRunning: boolean;
+    isStarting: boolean;
+    port: number | null;
+    pid: number | null;
+  }>;
+  getFlaskLogs: (lines?: number) => Promise<{
+    success: boolean;
+    error?: string;
+    logs: string;
+    total_lines?: number;
+    returned_lines?: number;
+    log_file?: string;
+  }>;
 }
 
 interface Window {

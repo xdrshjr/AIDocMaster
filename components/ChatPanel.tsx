@@ -1,94 +1,71 @@
 /**
- * ChatDialog Component
- * Main chat interface with message history and streaming support
- * Displays above the floating chat button
+ * ChatPanel Component
+ * Right panel for AI Chat with message display and input
+ * Shows conversation messages and provides input interface
  */
 
 'use client';
 
-import { useState, useEffect, useRef, forwardRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import { X, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { logger } from '@/lib/logger';
+import { getDictionary } from '@/lib/i18n/dictionaries';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
 
-export interface ChatDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title?: string;
-  welcomeMessage?: string;
-}
-
-interface Message extends ChatMessageType {
+export interface Message extends ChatMessageType {
   id: string;
   timestamp: Date;
+  isCleared?: boolean;
 }
 
-const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({ 
-  isOpen, 
-  onClose, 
-  title = 'AI Assistant',
-  welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?'
-}, ref) => {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatPanelProps {
+  conversationId: string | null;
+  messagesMap: Map<string, Message[]>;
+  onMessagesMapChange: (messagesMap: Map<string, Message[]>) => void;
+  onMessagesChange?: (messages: Message[]) => void;
+}
+
+const ChatPanel = ({ 
+  conversationId, 
+  messagesMap,
+  onMessagesMapChange,
+  onMessagesChange 
+}: ChatPanelProps) => {
+  const dict = getDictionary('en');
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
-  const [viewportHeight, setViewportHeight] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Track viewport height for responsive dialog sizing
   useEffect(() => {
-    const updateViewportHeight = () => {
-      const height = window.innerHeight;
-      setViewportHeight(height);
-      logger.debug('Viewport height updated', { 
-        height, 
-        calculatedChatHeight: Math.floor(height * 0.8) 
-      }, 'ChatDialog');
-    };
+    logger.component('ChatPanel', 'mounted', { 
+      conversationId,
+      messagesInConversation: conversationId ? (messagesMap.get(conversationId)?.length || 0) : 0,
+    });
+  }, [conversationId]);
 
-    // Initialize viewport height
-    updateViewportHeight();
-    logger.info('Chat dialog viewport tracking initialized', { 
-      initialHeight: window.innerHeight 
-    }, 'ChatDialog');
+  // Get messages for current conversation
+  const messages = conversationId ? (messagesMap.get(conversationId) || []) : [];
 
-    // Add resize listener with debouncing for performance
-    let resizeTimeout: NodeJS.Timeout;
-    const handleResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => {
-        updateViewportHeight();
-      }, 100);
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      clearTimeout(resizeTimeout);
-      window.removeEventListener('resize', handleResize);
-      logger.debug('Chat dialog viewport tracking cleaned up', undefined, 'ChatDialog');
-    };
-  }, []);
-
-  // Initialize with welcome message
+  // Initialize with welcome message when conversation changes
   useEffect(() => {
-    if (isOpen && messages.length === 0) {
+    if (conversationId && messages.length === 0) {
       const welcomeMsg: Message = {
-        id: 'welcome',
+        id: `welcome-${conversationId}`,
         role: 'assistant',
-        content: welcomeMessage,
+        content: dict.chat.welcomeMessage,
         timestamp: new Date(),
       };
-      setMessages([welcomeMsg]);
-      logger.component('ChatDialog', 'initialized with welcome message');
+      const newMap = new Map(messagesMap);
+      newMap.set(conversationId, [welcomeMsg]);
+      onMessagesMapChange(newMap);
+      logger.debug('Welcome message initialized', { conversationId }, 'ChatPanel');
     }
-  }, [isOpen, messages.length, welcomeMessage]);
+  }, [conversationId, messages.length, dict.chat.welcomeMessage]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -97,8 +74,24 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     }
   }, [messages, streamingContent]);
 
+  // Notify parent of message changes
+  // Use a ref to track previous messages length to avoid infinite loops
+  const prevMessagesLengthRef = useRef<number>(0);
+  
+  useEffect(() => {
+    // Only notify parent if messages actually changed (not on initial render or same content)
+    if (onMessagesChange && messages.length !== prevMessagesLengthRef.current) {
+      prevMessagesLengthRef.current = messages.length;
+      onMessagesChange(messages);
+    }
+  }, [messages, onMessagesChange]);
+
   const handleSendMessage = async (content: string) => {
     if (!content.trim() || isLoading) {
+      logger.debug('Message send blocked', { 
+        hasContent: !!content.trim(), 
+        isLoading 
+      }, 'ChatPanel');
       return;
     }
 
@@ -109,26 +102,43 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    if (!conversationId) {
+      logger.error('No active conversation', undefined, 'ChatPanel');
+      return;
+    }
+
+    const newMapForUser = new Map(messagesMap);
+    const currentMessages = newMapForUser.get(conversationId) || [];
+    newMapForUser.set(conversationId, [...currentMessages, userMessage]);
+    onMessagesMapChange(newMapForUser);
+    
     setIsLoading(true);
     setStreamingContent('');
 
-    logger.info('Sending chat message', { messageLength: content.length }, 'ChatDialog');
+    logger.info('Sending chat message', { 
+      messageLength: content.length,
+      conversationId 
+    }, 'ChatPanel');
 
     try {
       // Sync model configurations to cookies before API call
       await syncModelConfigsToCookies();
+      logger.debug('Model config synced to cookies', undefined, 'ChatPanel');
       
-      // Prepare messages for API (without id and timestamp)
+      // Prepare messages for API (without id, timestamp, and cleared messages)
       const apiMessages: ChatMessageType[] = messages
-        .filter(msg => msg.id !== 'welcome') // Exclude welcome message
+        .filter(msg => !msg.id.startsWith('welcome-') && !msg.isCleared)
         .map(({ role, content }) => ({ role, content }));
       
       apiMessages.push({ role: 'user', content });
 
+      logger.debug('Prepared API messages', { 
+        messageCount: apiMessages.length 
+      }, 'ChatPanel');
+
       // Get appropriate API URL based on environment
       const apiUrl = await buildApiUrl('/api/chat');
-      logger.debug('Using API URL for chat', { apiUrl }, 'ChatDialog');
+      logger.debug('Using API URL for chat', { apiUrl }, 'ChatPanel');
 
       // Call streaming API
       const response = await fetch(apiUrl, {
@@ -146,7 +156,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
         } catch (parseError) {
           logger.warn('Failed to parse error response', {
             parseError: parseError instanceof Error ? parseError.message : 'Unknown error',
-          }, 'ChatDialog');
+          }, 'ChatPanel');
         }
         
         logger.error('API request failed', { 
@@ -154,22 +164,23 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           statusText: response.statusText,
           error: errorData.error,
           details: errorData.details,
-        }, 'ChatDialog');
+        }, 'ChatPanel');
         
         const errorMessage = errorData.details || errorData.error || `Failed to get response (${response.status} ${response.statusText})`;
         throw new Error(errorMessage);
       }
 
       if (!response.body) {
+        logger.error('Response body is empty', undefined, 'ChatPanel');
         throw new Error('Response body is empty');
       }
 
       logger.info('Starting to process streaming response', {
+        conversationId,
         hasResponseBody: !!response.body,
-        messageCount: messages.length,
         responseStatus: response.status,
         contentType: response.headers.get('content-type'),
-      }, 'ChatDialog');
+      }, 'ChatPanel');
 
       // Process streaming response with enhanced error handling
       const reader = response.body.getReader();
@@ -185,9 +196,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       const streamStartTime = Date.now();
       
       logger.debug('Stream reader initialized', {
-        messageCount: messages.length,
+        conversationId,
         streamStartTime,
-      }, 'ChatDialog');
+      }, 'ChatPanel');
 
       try {
         while (true) {
@@ -200,7 +211,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
               error: readError instanceof Error ? readError.message : 'Unknown error',
               chunkCount,
               contentLength: assistantContent.length,
-            }, 'ChatDialog');
+            }, 'ChatPanel');
             throw readError;
           }
 
@@ -213,7 +224,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
               emptyChunkCount,
               parseErrorCount,
               duration: `${Date.now() - streamStartTime}ms`,
-            }, 'ChatDialog');
+            }, 'ChatPanel');
             break;
           }
 
@@ -223,7 +234,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
             logger.warn('Received empty chunk from stream', {
               chunkIndex: chunkCount,
               emptyChunkCount,
-            }, 'ChatDialog');
+            }, 'ChatPanel');
             continue;
           }
 
@@ -233,8 +244,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           if (chunkCount === 1) {
             logger.info('First stream chunk received', {
               chunkSize: value.length,
+              conversationId,
               timeSinceStart: `${Date.now() - streamStartTime}ms`,
-            }, 'ChatDialog');
+            }, 'ChatPanel');
           }
           
           try {
@@ -244,7 +256,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
               error: decodeError instanceof Error ? decodeError.message : 'Unknown error',
               chunkIndex: chunkCount,
               chunkSize: value.length,
-            }, 'ChatDialog');
+            }, 'ChatPanel');
             continue; // Skip this chunk but continue processing
           }
 
@@ -273,7 +285,8 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     logger.info('First content chunk received and displaying', {
                       firstChunkLength: chunk.length,
                       timeSinceStreamStart: `${Date.now() - streamStartTime}ms`,
-                    }, 'ChatDialog');
+                      conversationId,
+                    }, 'ChatPanel');
                   }
                   
                   // Use flushSync to ensure immediate rendering of streaming content
@@ -290,14 +303,14 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                       parseErrors: parseErrorCount,
                       elapsed: `${now - streamStartTime}ms`,
                       averageChunkSize: Math.round(assistantContent.length / chunkCount),
-                    }, 'ChatDialog');
+                    }, 'ChatPanel');
                     lastProgressLog = now;
                   }
                 } else if (data.choices?.[0]?.finish_reason) {
                   logger.debug('Stream finished', {
                     finishReason: data.choices[0].finish_reason,
                     contentLength: assistantContent.length,
-                  }, 'ChatDialog');
+                  }, 'ChatPanel');
                 }
               } catch (parseError) {
                 parseErrorCount++;
@@ -306,7 +319,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                   linePreview: trimmedLine.substring(0, 100),
                   parseErrorCount,
                   chunkIndex: chunkCount,
-                }, 'ChatDialog');
+                }, 'ChatPanel');
                 
                 // Fail if too many parse errors
                 if (parseErrorCount >= maxParseErrors) {
@@ -314,7 +327,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     parseErrorCount,
                     maxParseErrors,
                     chunkCount,
-                  }, 'ChatDialog');
+                  }, 'ChatPanel');
                   throw new Error(`Stream parsing failed: ${parseErrorCount} errors exceeded maximum of ${maxParseErrors}`);
                 }
               }
@@ -327,7 +340,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           logger.debug('Processing remaining buffer content', {
             bufferLength: buffer.length,
             bufferPreview: buffer.substring(0, 100),
-          }, 'ChatDialog');
+          }, 'ChatPanel');
         }
       } finally {
         try {
@@ -335,16 +348,16 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           logger.debug('Stream reader released', {
             chunkCount,
             parseErrorCount,
-          }, 'ChatDialog');
+          }, 'ChatPanel');
         } catch (releaseError) {
           logger.warn('Failed to release reader', {
             error: releaseError instanceof Error ? releaseError.message : 'Unknown error',
-          }, 'ChatDialog');
+          }, 'ChatPanel');
         }
       }
 
       // Add complete assistant message
-      if (assistantContent) {
+      if (assistantContent && conversationId) {
         const assistantMessage: Message = {
           id: `assistant-${Date.now()}`,
           role: 'assistant',
@@ -352,8 +365,15 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           timestamp: new Date(),
         };
 
-        setMessages((prev) => [...prev, assistantMessage]);
-        logger.success('Chat response received', { contentLength: assistantContent.length }, 'ChatDialog');
+        const newMapForAssistant = new Map(messagesMap);
+        const currentMessages = newMapForAssistant.get(conversationId) || [];
+        newMapForAssistant.set(conversationId, [...currentMessages, assistantMessage]);
+        onMessagesMapChange(newMapForAssistant);
+        
+        logger.success('Chat response received', { 
+          contentLength: assistantContent.length,
+          conversationId 
+        }, 'ChatPanel');
       }
 
       setStreamingContent('');
@@ -362,145 +382,117 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       logger.error('Failed to send chat message', {
         error: error instanceof Error ? error.message : 'Unknown error',
         errorStack: error instanceof Error ? error.stack : undefined,
-      }, 'ChatDialog');
+        conversationId,
+      }, 'ChatPanel');
 
-      // Provide more informative error message to user
-      let userFriendlyError = 'Sorry, I encountered an error. Please try again.';
-      
-      if (error instanceof Error) {
-        const errorMsg = error.message.toLowerCase();
-        if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
-          userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
-        } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
-          userFriendlyError = 'The request timed out. Please try again or check your network connection.';
-        } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
-          userFriendlyError = error.message; // Use the detailed error message from backend
+      if (conversationId) {
+        // Provide more informative error message to user
+        let userFriendlyError = dict.chat.errorMessage;
+        
+        if (error instanceof Error) {
+          const errorMsg = error.message.toLowerCase();
+          if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
+            userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
+          } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
+            userFriendlyError = 'The request timed out. Please try again or check your network connection.';
+          } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
+            userFriendlyError = error.message; // Use the detailed error message from backend
+          }
         }
+        
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: userFriendlyError,
+          timestamp: new Date(),
+        };
+
+        const newMapForError = new Map(messagesMap);
+        const currentMessages = newMapForError.get(conversationId) || [];
+        newMapForError.set(conversationId, [...currentMessages, errorMessage]);
+        onMessagesMapChange(newMapForError);
       }
-
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: userFriendlyError,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, errorMessage]);
       setStreamingContent('');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleClose = () => {
-    logger.component('ChatDialog', 'closed');
-    onClose();
-  };
-
   const handleClearChat = () => {
-    const currentMessageCount = messages.length;
-    logger.info('Clearing chat messages', { 
-      messageCount: currentMessageCount,
-      excludingWelcome: true 
-    }, 'ChatDialog');
+    if (!conversationId) {
+      logger.error('No active conversation to clear', undefined, 'ChatPanel');
+      return;
+    }
+
+    logger.info('Clearing chat context', { 
+      currentMessageCount: messages.length,
+      conversationId 
+    }, 'ChatPanel');
     
-    // Reset to only the welcome message
-    const welcomeMsg: Message = {
-      id: 'welcome',
+    // Add a cleared indicator message
+    const clearedMessage: Message = {
+      id: `cleared-${Date.now()}`,
       role: 'assistant',
-      content: welcomeMessage,
+      content: dict.chat.clearedMessage,
       timestamp: new Date(),
+      isCleared: true,
     };
     
-    setMessages([welcomeMsg]);
+    // Keep all messages (including history) but add cleared indicator
+    const newMapForClear = new Map(messagesMap);
+    const currentMessages = newMapForClear.get(conversationId) || [];
+    newMapForClear.set(conversationId, [...currentMessages, clearedMessage]);
+    onMessagesMapChange(newMapForClear);
+    
     setStreamingContent('');
     
-    logger.debug('Chat cleared successfully', { 
-      previousMessageCount: currentMessageCount,
-      currentMessageCount: 1 
-    }, 'ChatDialog');
+    logger.debug('Chat context cleared', { 
+      newMessageCount: messages.length + 1 
+    }, 'ChatPanel');
   };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      handleClose();
-    }
-  };
-
-  if (!isOpen) {
-    return null;
-  }
-
-  // Calculate chat dialog height as 80% of viewport height
-  // Minimum height of 300px to ensure usability
-  const calculatedHeight = viewportHeight > 0 
-    ? Math.max(Math.floor(viewportHeight * 0.8), 300)
-    : 720; // Default fallback height
-
-  logger.debug('Chat dialog height calculated', {
-    viewportHeight,
-    calculatedHeight,
-    percentage: '80%'
-  }, 'ChatDialog');
 
   return (
-    <div
-      ref={ref}
-      className="fixed bottom-24 right-6 w-[576px] bg-background border-2 border-border rounded-lg shadow-xl flex flex-col z-50 animate-slideUp"
-      style={{ height: `${calculatedHeight}px` }}
-      onKeyDown={handleKeyDown}
-      role="dialog"
-      aria-label={title}
-      aria-modal="true"
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border bg-muted/50">
-        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-        <button
-          onClick={handleClose}
-          className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
-          aria-label="Close chat"
-          tabIndex={0}
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Messages */}
-      <div
-        ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4 space-y-2"
-      >
-        {messages.map((message) => (
-          <ChatMessage
-            key={message.id}
-            role={message.role as 'user' | 'assistant'}
-            content={message.content}
-            timestamp={message.timestamp}
-          />
-        ))}
-
-        {/* Streaming message with typing indicator */}
-        {streamingContent && (
-          <div className="relative">
-            <ChatMessage
-              role="assistant"
-              content={streamingContent}
-            />
-            {/* Blinking cursor to indicate active streaming */}
-            <div className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
+    <div className="h-full flex flex-col bg-background">
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {messages.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            <p className="text-sm">Start a conversation...</p>
           </div>
-        )}
+        ) : (
+          <>
+            {messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                role={message.role as 'user' | 'assistant'}
+                content={message.content}
+                timestamp={message.timestamp}
+              />
+            ))}
 
-        {/* Loading indicator */}
-        {isLoading && !streamingContent && (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Thinking...</span>
-          </div>
-        )}
+            {/* Streaming message with typing indicator */}
+            {streamingContent && (
+              <div className="relative">
+                <ChatMessage
+                  role="assistant"
+                  content={streamingContent}
+                />
+                {/* Blinking cursor to indicate active streaming */}
+                <div className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
+              </div>
+            )}
 
-        <div ref={messagesEndRef} />
+            {/* Loading indicator */}
+            {isLoading && !streamingContent && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">{dict.chat.thinking}</span>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
       {/* Clear Button */}
@@ -508,26 +500,24 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
         <button
           onClick={handleClearChat}
           disabled={messages.length <= 1 || isLoading}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-label="Clear chat history"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-border"
+          aria-label="Clear chat context"
           tabIndex={0}
         >
           <Trash2 className="w-3.5 h-3.5" />
-          <span>Clear</span>
+          <span>{dict.chat.clearButton}</span>
         </button>
       </div>
 
-      {/* Input */}
+      {/* Input Area */}
       <ChatInput
         onSend={handleSendMessage}
         disabled={isLoading}
-        placeholder="Type your message..."
+        placeholder={dict.chat.inputPlaceholder}
       />
     </div>
   );
-});
+};
 
-ChatDialog.displayName = 'ChatDialog';
-
-export default ChatDialog;
+export default ChatPanel;
 

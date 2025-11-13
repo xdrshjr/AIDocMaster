@@ -16,6 +16,7 @@ const en = {
   },
   taskbar: {
     aiDocValidation: 'AI Document Validation',
+    aiChat: 'AI Chat',
   },
   footer: {
     copyright: '© 2025 DocAIMaster. All rights reserved.',
@@ -85,6 +86,10 @@ const en = {
     thinking: 'Thinking...',
     errorMessage: 'Sorry, I encountered an error. Please try again.',
     configError: 'Chat is not configured. Please check your settings.',
+    clearButton: 'Clear',
+    clearedMessage: '✓ Chat cleared',
+    newConversation: 'New Conversation',
+    conversations: 'Conversations',
   },
 };
 
@@ -100,6 +105,7 @@ const zh = {
   },
   taskbar: {
     aiDocValidation: 'AI文档校验',
+    aiChat: 'AI对话',
   },
   footer: {
     copyright: '© 2025 DocAIMaster. 保留所有权利。',
@@ -169,6 +175,10 @@ const zh = {
     thinking: '思考中...',
     errorMessage: '抱歉，遇到了错误。请重试。',
     configError: '聊天未配置。请检查您的设置。',
+    clearButton: '清除',
+    clearedMessage: '✓ 聊天已清除',
+    newConversation: '新对话',
+    conversations: '对话列表',
   },
 };
 

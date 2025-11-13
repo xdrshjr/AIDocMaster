@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MessageCircle, X } from 'lucide-react';
 import ChatDialog from './ChatDialog';
 import { logger } from '@/lib/logger';
@@ -21,6 +21,8 @@ const FloatingChatButton = ({
   welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?'
 }: FloatingChatButtonProps) => {
   const [isOpen, setIsOpen] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleToggle = () => {
     const newState = !isOpen;
@@ -35,6 +37,40 @@ const FloatingChatButton = ({
     }
   };
 
+  // Click outside detection to auto-collapse the chat panel
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      
+      // Check if click is outside both the dialog and the button
+      if (
+        dialogRef.current && 
+        !dialogRef.current.contains(target) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(target)
+      ) {
+        logger.info('Chat dialog closed by clicking outside', undefined, 'FloatingChatButton');
+        setIsOpen(false);
+      }
+    };
+
+    // Add event listener with a slight delay to prevent immediate closing
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside);
+      logger.debug('Click-outside detection enabled for chat dialog', undefined, 'FloatingChatButton');
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('mousedown', handleClickOutside);
+      logger.debug('Click-outside detection disabled for chat dialog', undefined, 'FloatingChatButton');
+    };
+  }, [isOpen]);
+
   return (
     <>
       {/* Chat Dialog */}
@@ -43,10 +79,12 @@ const FloatingChatButton = ({
         onClose={() => setIsOpen(false)}
         title={title}
         welcomeMessage={welcomeMessage}
+        ref={dialogRef}
       />
 
       {/* Floating Button */}
       <button
+        ref={buttonRef}
         onClick={handleToggle}
         onKeyDown={handleKeyDown}
         className={`fixed bottom-6 right-6 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl flex items-center justify-center transition-all duration-300 z-40 ${

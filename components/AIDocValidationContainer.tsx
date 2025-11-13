@@ -42,20 +42,26 @@ interface AIDocValidationContainerProps {
   onExportRequest?: () => void;
   onContentChange?: (content: string) => void;
   onExportReadyChange?: (ready: boolean) => void;
+  validationResults: ValidationResult[];
+  onValidationResultsChange: (results: ValidationResult[]) => void;
+  leftPanelWidth: number;
+  onLeftPanelWidthChange: (width: number) => void;
 }
 
 const AIDocValidationContainer = ({ 
   onExportRequest, 
   onContentChange,
   onExportReadyChange,
+  validationResults,
+  onValidationResultsChange,
+  leftPanelWidth,
+  onLeftPanelWidthChange,
 }: AIDocValidationContainerProps) => {
-  const [leftPanelWidth, setLeftPanelWidth] = useState(60); // percentage
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Validation state
+  // Validation state (only temporary/local state)
   const [isValidating, setIsValidating] = useState(false);
-  const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [hasDocument, setHasDocument] = useState(false);
@@ -64,7 +70,11 @@ const AIDocValidationContainer = ({
   const wordEditorRef = useRef<{ getContent: () => string } | null>(null);
 
   useEffect(() => {
-    logger.component('AIDocValidationContainer', 'mounted');
+    logger.component('AIDocValidationContainer', 'mounted', {
+      hasValidationResults: validationResults.length > 0,
+      validationResultsCount: validationResults.length,
+      leftPanelWidth,
+    });
   }, []);
 
   const handleContentChange = (content: string) => {
@@ -94,7 +104,7 @@ const AIDocValidationContainer = ({
     const validation = validateDocumentContent(textContent);
     if (!validation.valid) {
       logger.error('Document content validation failed', { error: validation.error }, 'AIDocValidationContainer');
-      setValidationResults([{
+      onValidationResultsChange([{
         chunkIndex: 0,
         issues: [],
         summary: {
@@ -119,7 +129,7 @@ const AIDocValidationContainer = ({
     }, 'AIDocValidationContainer');
 
     setIsValidating(true);
-    setValidationResults([]);
+    onValidationResultsChange([]);
     setTotalChunks(chunks.length);
     setCurrentChunk(0);
 
@@ -151,8 +161,26 @@ const AIDocValidationContainer = ({
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Validation failed');
+          let errorData: { error?: string; details?: string } = {};
+          try {
+            errorData = await response.json();
+          } catch (parseError) {
+            logger.warn('Failed to parse validation error response', {
+              parseError: parseError instanceof Error ? parseError.message : 'Unknown error',
+              chunkIndex: i,
+            }, 'AIDocValidationContainer');
+          }
+          
+          logger.error('Validation API request failed', { 
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData.error,
+            details: errorData.details,
+            chunkIndex: i,
+          }, 'AIDocValidationContainer');
+          
+          const errorMessage = errorData.details || errorData.error || `Validation failed (${response.status} ${response.statusText})`;
+          throw new Error(errorMessage);
         }
 
         if (!response.body) {
@@ -173,57 +201,152 @@ const AIDocValidationContainer = ({
         }, 'AIDocValidationContainer');
 
         const streamStartTime = Date.now();
+        let parseErrorCount = 0;
+        let emptyChunkCount = 0;
+        let lastProgressLog = Date.now();
+        const progressLogInterval = 3000; // Log progress every 3 seconds
+        const maxParseErrors = 15; // Higher for validation as responses are more complex
 
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) {
-            logger.debug('Stream reading completed', {
-              chunkIndex: i,
-              streamChunksReceived: streamChunkCount,
-              streamDuration: `${Date.now() - streamStartTime}ms`,
-            }, 'AIDocValidationContainer');
-            break;
-          }
-
-          streamChunkCount++;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmedLine = line.trim();
+        try {
+          while (true) {
+            let readResult;
             
-            if (!trimmedLine || trimmedLine === 'data: [DONE]') {
+            try {
+              readResult = await reader.read();
+            } catch (readError) {
+              logger.error('Failed to read from validation stream', {
+                error: readError instanceof Error ? readError.message : 'Unknown error',
+                chunkIndex: i,
+                streamChunksReceived: streamChunkCount,
+                accumulatedLength: accumulatedContent.length,
+              }, 'AIDocValidationContainer');
+              throw readError;
+            }
+
+            const { done, value } = readResult;
+            
+            if (done) {
+              logger.success('Validation stream reading completed', {
+                chunkIndex: i,
+                streamChunksReceived: streamChunkCount,
+                emptyChunkCount,
+                parseErrorCount,
+                accumulatedLength: accumulatedContent.length,
+                streamDuration: `${Date.now() - streamStartTime}ms`,
+              }, 'AIDocValidationContainer');
+              break;
+            }
+
+            // Validate chunk
+            if (!value || value.length === 0) {
+              emptyChunkCount++;
+              logger.warn('Received empty chunk from validation stream', {
+                chunkIndex: i,
+                streamChunkIndex: streamChunkCount,
+                emptyChunkCount,
+              }, 'AIDocValidationContainer');
               continue;
             }
 
-            if (trimmedLine.startsWith('data: ')) {
-              try {
-                const jsonStr = trimmedLine.slice(6);
-                const data = JSON.parse(jsonStr);
-                const content = data.choices?.[0]?.delta?.content;
-                
-                if (content) {
-                  accumulatedContent += content;
+            streamChunkCount++;
+            
+            try {
+              buffer += decoder.decode(value, { stream: true });
+            } catch (decodeError) {
+              logger.error('Failed to decode validation chunk', {
+                error: decodeError instanceof Error ? decodeError.message : 'Unknown error',
+                chunkIndex: i,
+                streamChunkIndex: streamChunkCount,
+                chunkSize: value.length,
+              }, 'AIDocValidationContainer');
+              continue; // Skip this chunk but continue processing
+            }
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              
+              if (!trimmedLine || trimmedLine === 'data: [DONE]') {
+                continue;
+              }
+
+              if (trimmedLine.startsWith('data: ')) {
+                try {
+                  const jsonStr = trimmedLine.slice(6);
+                  const data = JSON.parse(jsonStr);
+                  const content = data.choices?.[0]?.delta?.content;
                   
-                  // Log progress for every 10 content chunks
-                  if (accumulatedContent.length % 500 < content.length) {
-                    logger.debug('Stream accumulation progress', {
+                  if (content) {
+                    accumulatedContent += content;
+                    
+                    // Log progress periodically
+                    const now = Date.now();
+                    if (now - lastProgressLog >= progressLogInterval) {
+                      logger.debug('Validation stream accumulation progress', {
+                        chunkIndex: i,
+                        accumulatedLength: accumulatedContent.length,
+                        streamChunks: streamChunkCount,
+                        parseErrors: parseErrorCount,
+                        elapsed: `${now - streamStartTime}ms`,
+                        averageChunkSize: streamChunkCount > 0 ? Math.round(accumulatedContent.length / streamChunkCount) : 0,
+                      }, 'AIDocValidationContainer');
+                      lastProgressLog = now;
+                    }
+                  } else if (data.choices?.[0]?.finish_reason) {
+                    logger.debug('Validation stream finished', {
+                      finishReason: data.choices[0].finish_reason,
                       chunkIndex: i,
                       accumulatedLength: accumulatedContent.length,
-                      streamChunks: streamChunkCount,
                     }, 'AIDocValidationContainer');
                   }
+                } catch (parseError) {
+                  parseErrorCount++;
+                  logger.warn('Failed to parse validation SSE chunk', {
+                    error: parseError instanceof Error ? parseError.message : 'Unknown error',
+                    chunkIndex: i,
+                    linePreview: trimmedLine.substring(0, 100),
+                    parseErrorCount,
+                    streamChunkIndex: streamChunkCount,
+                  }, 'AIDocValidationContainer');
+                  
+                  // Fail if too many parse errors
+                  if (parseErrorCount >= maxParseErrors) {
+                    logger.error('Too many parse errors in validation stream, aborting', {
+                      parseErrorCount,
+                      maxParseErrors,
+                      chunkIndex: i,
+                      streamChunksReceived: streamChunkCount,
+                    }, 'AIDocValidationContainer');
+                    throw new Error(`Validation stream parsing failed: ${parseErrorCount} errors exceeded maximum of ${maxParseErrors}`);
+                  }
                 }
-              } catch (parseError) {
-                logger.warn('Failed to parse SSE chunk', {
-                  error: parseError instanceof Error ? parseError.message : 'Unknown error',
-                  chunkIndex: i,
-                  linePreview: trimmedLine.substring(0, 100),
-                }, 'AIDocValidationContainer');
               }
             }
+          }
+
+          // Process any remaining buffer content
+          if (buffer.trim()) {
+            logger.debug('Processing remaining validation buffer content', {
+              chunkIndex: i,
+              bufferLength: buffer.length,
+              bufferPreview: buffer.substring(0, 100),
+            }, 'AIDocValidationContainer');
+          }
+        } finally {
+          try {
+            reader.releaseLock();
+            logger.debug('Validation stream reader released', {
+              chunkIndex: i,
+              streamChunksReceived: streamChunkCount,
+              parseErrorCount,
+            }, 'AIDocValidationContainer');
+          } catch (releaseError) {
+            logger.warn('Failed to release validation reader', {
+              error: releaseError instanceof Error ? releaseError.message : 'Unknown error',
+              chunkIndex: i,
+            }, 'AIDocValidationContainer');
           }
         }
 
@@ -317,36 +440,34 @@ const AIDocValidationContainer = ({
           }, 'AIDocValidationContainer');
 
           // Update validation results with parsed data
-          setValidationResults(prev => {
-            const existingIndex = prev.findIndex(r => r.chunkIndex === i);
-            const newResult: ValidationResult = {
-              chunkIndex: i,
-              issues,
-              summary: validationData.summary || {
-                totalIssues: issues.length,
-                grammarCount: issues.filter(iss => iss.category === 'Grammar').length,
-                wordUsageCount: issues.filter(iss => iss.category === 'WordUsage').length,
-                punctuationCount: issues.filter(iss => iss.category === 'Punctuation').length,
-                logicCount: issues.filter(iss => iss.category === 'Logic').length,
-              },
-              timestamp: new Date(),
-            };
+          const existingIndex = validationResults.findIndex(r => r.chunkIndex === i);
+          const newResult: ValidationResult = {
+            chunkIndex: i,
+            issues,
+            summary: validationData.summary || {
+              totalIssues: issues.length,
+              grammarCount: issues.filter(iss => iss.category === 'Grammar').length,
+              wordUsageCount: issues.filter(iss => iss.category === 'WordUsage').length,
+              punctuationCount: issues.filter(iss => iss.category === 'Punctuation').length,
+              logicCount: issues.filter(iss => iss.category === 'Logic').length,
+            },
+            timestamp: new Date(),
+          };
 
-            logger.info('Updating validation results state', {
-              chunkIndex: i,
-              isUpdate: existingIndex >= 0,
-              previousResultsCount: prev.length,
-              newIssuesCount: issues.length,
-            }, 'AIDocValidationContainer');
+          logger.info('Updating validation results state', {
+            chunkIndex: i,
+            isUpdate: existingIndex >= 0,
+            previousResultsCount: validationResults.length,
+            newIssuesCount: issues.length,
+          }, 'AIDocValidationContainer');
 
-            if (existingIndex >= 0) {
-              const updated = [...prev];
-              updated[existingIndex] = newResult;
-              return updated;
-            } else {
-              return [...prev, newResult];
-            }
-          });
+          if (existingIndex >= 0) {
+            const updated = [...validationResults];
+            updated[existingIndex] = newResult;
+            onValidationResultsChange(updated);
+          } else {
+            onValidationResultsChange([...validationResults, newResult]);
+          }
 
         } catch (parseError) {
           logger.error('Failed to parse validation JSON result', {
@@ -360,7 +481,7 @@ const AIDocValidationContainer = ({
           }, 'AIDocValidationContainer');
 
           // Add error result
-          setValidationResults(prev => [...prev, {
+          onValidationResultsChange([...validationResults, {
             chunkIndex: i,
             issues: [],
             summary: {
@@ -409,7 +530,7 @@ const AIDocValidationContainer = ({
         errorType: error instanceof Error ? error.constructor.name : typeof error,
       }, 'AIDocValidationContainer');
       
-      setValidationResults(prev => [...prev, {
+      onValidationResultsChange([...validationResults, {
         chunkIndex: currentChunk,
         issues: [],
         summary: {
@@ -447,7 +568,7 @@ const AIDocValidationContainer = ({
     
     // Constrain width between 30% and 70%
     if (newWidth >= 30 && newWidth <= 70) {
-      setLeftPanelWidth(newWidth);
+      onLeftPanelWidthChange(newWidth);
     }
   };
 
