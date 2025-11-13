@@ -6,6 +6,7 @@ import Footer from '@/components/Footer';
 import Taskbar from '@/components/Taskbar';
 import AIDocValidationContainer from '@/components/AIDocValidationContainer';
 import AIChatContainer from '@/components/AIChatContainer';
+import FloatingChatButton from '@/components/FloatingChatButton';
 import { FileCheck, MessageSquare } from 'lucide-react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -54,6 +55,7 @@ export default function Home() {
     logger.info('Active task changed', { 
       fromTask: activeTaskId, 
       toTask: taskId,
+      floatingChatButtonVisible: taskId !== 'ai-chat',
       preservedState: {
         conversations: conversations.length,
         messagesMapSize: messagesMap.size,
@@ -217,6 +219,9 @@ export default function Home() {
       </div>
       
       <Footer copyright={dict.footer.copyright} />
+      
+      {/* Floating Chat Button - only visible when NOT in AI Chat task */}
+      <FloatingChatButton isVisible={activeTaskId !== 'ai-chat'} />
     </div>
   );
 }

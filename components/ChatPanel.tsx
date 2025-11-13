@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2, Bot } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { logger } from '@/lib/logger';
@@ -109,13 +109,35 @@ const ChatPanel = ({
       return;
     }
 
+    // Add user message to the conversation immediately so it's visible
     const newMapForUser = new Map(messagesMap);
     const currentMessages = newMapForUser.get(conversationId) || [];
-    newMapForUser.set(conversationId, [...currentMessages, userMessage]);
+    const messagesWithUser = [...currentMessages, userMessage];
+    newMapForUser.set(conversationId, messagesWithUser);
+    
+    logger.info('User message added to conversation', {
+      messageId: userMessage.id,
+      conversationId,
+      messageCountBefore: currentMessages.length,
+      messageCountAfter: messagesWithUser.length,
+      userMessagesCount: messagesWithUser.filter(m => m.role === 'user').length,
+      content: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
+    }, 'ChatPanel');
+    
     onMessagesMapChange(newMapForUser);
+    
+    logger.debug('MessagesMap updated with user message', {
+      conversationId,
+      mapSize: newMapForUser.size,
+      messagesInConversation: newMapForUser.get(conversationId)?.length || 0,
+    }, 'ChatPanel');
     
     setIsLoading(true);
     setStreamingContent('');
+    
+    // Store the updated map in a variable accessible to the async code below
+    // This ensures we use the map that contains the user message
+    let latestMessagesMap = newMapForUser;
 
     logger.info('Sending chat message', { 
       messageLength: content.length,
@@ -182,6 +204,8 @@ const ChatPanel = ({
         hasResponseBody: !!response.body,
         responseStatus: response.status,
         contentType: response.headers.get('content-type'),
+        currentMessageCount: messages.length,
+        messagesIncludeUserMessage: messages.some(m => m.role === 'user'),
       }, 'ChatPanel');
 
       // Process streaming response with enhanced error handling
@@ -288,6 +312,8 @@ const ChatPanel = ({
                       firstChunkLength: chunk.length,
                       timeSinceStreamStart: `${Date.now() - streamStartTime}ms`,
                       conversationId,
+                      currentMessagesVisible: messages.length,
+                      userMessagePresent: messages.some(m => m.role === 'user'),
                     }, 'ChatPanel');
                   }
                   
@@ -295,6 +321,15 @@ const ChatPanel = ({
                   flushSync(() => {
                     setStreamingContent(assistantContent);
                   });
+                  
+                  // Log streaming update periodically
+                  if (chunkCount % 10 === 0) {
+                    logger.debug('Streaming content update', {
+                      contentLength: assistantContent.length,
+                      chunkNumber: chunkCount,
+                      messagesInView: messages.length,
+                    }, 'ChatPanel');
+                  }
                   
                   // Log progress periodically
                   const now = Date.now();
@@ -367,14 +402,34 @@ const ChatPanel = ({
           timestamp: new Date(),
         };
 
-        const newMapForAssistant = new Map(messagesMap);
-        const currentMessages = newMapForAssistant.get(conversationId) || [];
-        newMapForAssistant.set(conversationId, [...currentMessages, assistantMessage]);
+        // CRITICAL FIX: Use latestMessagesMap which contains the user message
+        // The original 'messagesMap' prop is stale and doesn't include the user message
+        const newMapForAssistant = new Map(latestMessagesMap);
+        const currentMessagesInMap = newMapForAssistant.get(conversationId) || [];
+        const updatedMessages = [...currentMessagesInMap, assistantMessage];
+        newMapForAssistant.set(conversationId, updatedMessages);
+        
+        logger.debug('Adding assistant message to conversation', {
+          conversationId,
+          assistantContentLength: assistantContent.length,
+          messagesBeforeAdd: currentMessagesInMap.length,
+          messagesAfterAdd: updatedMessages.length,
+          userMessagesInConversation: currentMessagesInMap.filter(m => m.role === 'user').length,
+          assistantMessagesInConversation: currentMessagesInMap.filter(m => m.role === 'assistant').length,
+        }, 'ChatPanel');
+        
+        // Update latestMessagesMap for potential error handling
+        latestMessagesMap = newMapForAssistant;
+        
         onMessagesMapChange(newMapForAssistant);
         
-        logger.success('Chat response received', { 
+        logger.success('Chat response completed and added', { 
           contentLength: assistantContent.length,
-          conversationId 
+          conversationId,
+          totalMessagesNow: updatedMessages.length,
+          userMessagesCount: updatedMessages.filter(m => m.role === 'user').length,
+          assistantMessagesCount: updatedMessages.filter(m => m.role === 'assistant').length,
+          lastUserMessage: updatedMessages.filter(m => m.role === 'user').slice(-1)[0]?.content?.substring(0, 50),
         }, 'ChatPanel');
       }
 
@@ -409,9 +464,20 @@ const ChatPanel = ({
           timestamp: new Date(),
         };
 
-        const newMapForError = new Map(messagesMap);
+        // Use latestMessagesMap to include the user message
+        const newMapForError = new Map(latestMessagesMap);
         const currentMessages = newMapForError.get(conversationId) || [];
-        newMapForError.set(conversationId, [...currentMessages, errorMessage]);
+        const messagesWithError = [...currentMessages, errorMessage];
+        newMapForError.set(conversationId, messagesWithError);
+        
+        logger.info('Error message added to conversation', {
+          conversationId,
+          messageCountBefore: currentMessages.length,
+          messageCountAfter: messagesWithError.length,
+          userMessagesInConversation: currentMessages.filter(m => m.role === 'user').length,
+          errorPreview: userFriendlyError.substring(0, 100),
+        }, 'ChatPanel');
+        
         onMessagesMapChange(newMapForError);
       }
       setStreamingContent('');
@@ -456,10 +522,14 @@ const ChatPanel = ({
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-1">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p className="text-sm">Start a conversation...</p>
+            <div className="text-center">
+              <Bot className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
+              <p className="text-sm font-medium">Start a conversation...</p>
+              <p className="text-xs mt-1 text-muted-foreground/70">Ask me anything!</p>
+            </div>
           </div>
         ) : (
           <>
@@ -480,14 +550,14 @@ const ChatPanel = ({
                   content={streamingContent}
                 />
                 {/* Blinking cursor to indicate active streaming */}
-                <div className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
+                <div className="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
               </div>
             )}
 
             {/* Loading indicator */}
             {isLoading && !streamingContent && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" />
+              <div className="flex items-center gap-2.5 text-muted-foreground ml-14 mb-4">
+                <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
                 <span className="text-sm">{dict.chat.thinking}</span>
               </div>
             )}
@@ -498,16 +568,16 @@ const ChatPanel = ({
       </div>
 
       {/* Clear Button */}
-      <div className="px-4 pb-2 border-t border-border bg-background">
+      <div className="px-6 py-3 border-t border-border/50 bg-background/50">
         <button
           onClick={handleClearChat}
           disabled={messages.length <= 1 || isLoading}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-border"
+          className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-border/50 hover:shadow-sm"
           aria-label="Clear chat context"
           tabIndex={0}
         >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>{dict.chat.clearButton}</span>
+          <Trash2 className="w-4 h-4" />
+          <span className="font-medium">{dict.chat.clearButton}</span>
         </button>
       </div>
 

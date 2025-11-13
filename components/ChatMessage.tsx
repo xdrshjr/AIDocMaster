@@ -43,37 +43,37 @@ const ChatMessage = ({ role, content, timestamp }: ChatMessageProps) => {
 
   return (
     <div
-      className={`flex gap-3 mb-4 animate-fadeIn ${
+      className={`flex gap-4 mb-6 animate-fadeIn ${
         isUser ? 'flex-row-reverse' : 'flex-row'
       }`}
     >
       {/* Avatar */}
       <div
-        className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+        className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center shadow-sm ${
           isUser
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-accent text-accent-foreground'
+            ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
+            : 'bg-gradient-to-br from-purple-500 to-purple-600 text-white'
         }`}
         aria-label={isUser ? 'User' : 'AI Assistant'}
       >
         {isUser ? (
-          <User className="w-4 h-4" />
+          <User className="w-5 h-5" />
         ) : (
-          <Bot className="w-4 h-4" />
+          <Bot className="w-5 h-5" />
         )}
       </div>
 
       {/* Message Content */}
       <div
-        className={`flex-1 max-w-[75%] ${
+        className={`flex-1 max-w-[80%] ${
           isUser ? 'items-end' : 'items-start'
         }`}
       >
         <div
-          className={`rounded-lg px-4 py-2 ${
+          className={`px-4 py-3 shadow-sm transition-all hover:shadow-md ${
             isUser
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-muted text-foreground'
+              ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
+              : 'bg-muted/80 text-foreground border border-border/50'
           }`}
         >
           {isUser ? (
@@ -94,7 +94,7 @@ const ChatMessage = ({ role, content, timestamp }: ChatMessageProps) => {
                         {children}
                       </code>
                     ) : (
-                      <code className="bg-muted px-1 py-0.5 rounded text-sm font-mono" {...props}>
+                      <code className="bg-muted/60 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
                         {children}
                       </code>
                     );
@@ -105,7 +105,7 @@ const ChatMessage = ({ role, content, timestamp }: ChatMessageProps) => {
                       {...props}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-500 hover:text-blue-600 underline"
+                      className="text-blue-500 hover:text-blue-600 underline underline-offset-2"
                     >
                       {children}
                     </a>
@@ -178,7 +178,7 @@ const ChatMessage = ({ role, content, timestamp }: ChatMessageProps) => {
         {/* Timestamp */}
         {timestamp && (
           <div
-            className={`text-xs text-muted-foreground mt-1 px-1 ${
+            className={`text-xs text-muted-foreground/70 mt-1.5 px-2 ${
               isUser ? 'text-right' : 'text-left'
             }`}
           >

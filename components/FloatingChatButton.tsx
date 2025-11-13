@@ -14,32 +14,27 @@ import { logger } from '@/lib/logger';
 export interface FloatingChatButtonProps {
   title?: string;
   welcomeMessage?: string;
+  isVisible?: boolean;
 }
 
 const FloatingChatButton = ({ 
   title = 'AI Assistant',
-  welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?'
+  welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?',
+  isVisible = true
 }: FloatingChatButtonProps) => {
+  // Always call hooks in the same order - never conditionally
   const [isOpen, setIsOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  const handleToggle = () => {
-    const newState = !isOpen;
-    setIsOpen(newState);
-    logger.info(`Chat dialog ${newState ? 'opened' : 'closed'}`, undefined, 'FloatingChatButton');
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handleToggle();
-    }
-  };
+  // Log visibility changes
+  useEffect(() => {
+    logger.debug('FloatingChatButton visibility changed', { isVisible }, 'FloatingChatButton');
+  }, [isVisible]);
 
   // Click outside detection to auto-collapse the chat panel
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !isVisible) {
       return;
     }
 
@@ -69,7 +64,34 @@ const FloatingChatButton = ({
       document.removeEventListener('mousedown', handleClickOutside);
       logger.debug('Click-outside detection disabled for chat dialog', undefined, 'FloatingChatButton');
     };
-  }, [isOpen]);
+  }, [isOpen, isVisible]);
+
+  // Auto-close chat when component becomes invisible
+  useEffect(() => {
+    if (!isVisible && isOpen) {
+      logger.info('Chat dialog auto-closed due to visibility change', undefined, 'FloatingChatButton');
+      setIsOpen(false);
+    }
+  }, [isVisible, isOpen]);
+
+  const handleToggle = () => {
+    const newState = !isOpen;
+    setIsOpen(newState);
+    logger.info(`Chat dialog ${newState ? 'opened' : 'closed'}`, undefined, 'FloatingChatButton');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleToggle();
+    }
+  };
+
+  // Don't render if not visible - but hooks are always called first
+  if (!isVisible) {
+    logger.debug('FloatingChatButton hidden', undefined, 'FloatingChatButton');
+    return null;
+  }
 
   return (
     <>

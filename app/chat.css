@@ -24,16 +24,16 @@
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .animate-fadeIn {
-  animation: fadeIn 0.3s ease-out forwards;
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* Pulse animation for floating button */
@@ -71,30 +71,57 @@
 }
 
 /* Custom scrollbar for chat messages */
-.chat-messages-container::-webkit-scrollbar {
-  width: 6px;
+.chat-messages-container::-webkit-scrollbar,
+div[class*="overflow-y-auto"]::-webkit-scrollbar {
+  width: 8px;
 }
 
-.chat-messages-container::-webkit-scrollbar-track {
+.chat-messages-container::-webkit-scrollbar-track,
+div[class*="overflow-y-auto"]::-webkit-scrollbar-track {
   background: transparent;
+  margin: 8px 0;
 }
 
-.chat-messages-container::-webkit-scrollbar-thumb {
+.chat-messages-container::-webkit-scrollbar-thumb,
+div[class*="overflow-y-auto"]::-webkit-scrollbar-thumb {
   background: var(--muted);
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
-.chat-messages-container::-webkit-scrollbar-thumb:hover {
+.chat-messages-container::-webkit-scrollbar-thumb:hover,
+div[class*="overflow-y-auto"]::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
+  background-clip: padding-box;
 }
 
 /* Message bubble transitions */
 .chat-message {
-  transition: all 0.2s ease-in-out;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .chat-message:hover {
   transform: translateY(-1px);
+}
+
+/* Enhanced message styling */
+.message-user-bubble {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+}
+
+.message-assistant-bubble {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Smooth transitions for all interactive elements */
+button,
+input,
+textarea {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Input focus states */

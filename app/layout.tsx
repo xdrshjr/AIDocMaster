@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./chat.css";
-import FloatingChatButton from "@/components/FloatingChatButton";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 
 // Use system fonts for desktop build to avoid Google Fonts fetch issues
@@ -30,7 +29,6 @@ export default function RootLayout({
       <body className={`${dmSans.variable} ${spaceMono.variable} antialiased`} suppressHydrationWarning>
         <LanguageProvider>
           {children}
-          <FloatingChatButton />
         </LanguageProvider>
       </body>
     </html>
