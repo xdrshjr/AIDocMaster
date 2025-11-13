@@ -37,7 +37,12 @@ const ValidationResultPanel = ({
   const issueRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
-    logger.info('ValidationResultPanel component mounted', undefined, 'ValidationResultPanel');
+    logger.info('ValidationResultPanel component mounted', {
+      spacingApproach: 'flex-gap',
+      reason: 'Using flex with gap property to avoid global CSS margin reset (margin:0) override',
+      prioritySpacing: '48px (gap-12)',
+      issueSpacing: '20px (gap-5)',
+    }, 'ValidationResultPanel');
   }, []);
 
   // Auto-scroll to bottom when new results arrive
@@ -146,6 +151,11 @@ const ValidationResultPanel = ({
     resultsCount: results.length,
     uniqueIssueIds: uniqueIssueIds.size,
     allIdsUnique: !hasDuplicateIds,
+    spacingConfig: {
+      betweenPriorities: '48px (flex gap-12)',
+      betweenIssues: '20px (flex gap-5)',
+      note: 'Using flex gap instead of space-y to avoid global margin reset override',
+    },
     note: 'Issues maintain original order within severity groups for left-right sync',
   }, 'ValidationResultPanel');
 
@@ -344,10 +354,10 @@ const ValidationResultPanel = ({
                 </div>
 
                 {/* Enhanced Container Content - Issues Grouped by Severity */}
-                <div className="p-6 space-y-7">
+                <div className="p-6 flex flex-col gap-6">
                   {/* High Priority Issues Section */}
                   {highCount > 0 && (
-                    <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-3 pb-2">
                         <div className="flex items-center gap-2 flex-1">
                           <div className="w-1.5 h-8 bg-gradient-to-b from-red-500 to-red-600 rounded-full shadow-sm" />
@@ -361,7 +371,7 @@ const ValidationResultPanel = ({
                           </div>
                         </div>
                       </div>
-                      <div className="space-y-3">
+                      <div className="flex flex-col gap-1">
                         {groupedIssues.high.map((issue, idx) => (
                           <IssueCard 
                             key={issue.id || `high-issue-${idx}`} 
@@ -377,7 +387,7 @@ const ValidationResultPanel = ({
 
                   {/* Medium Priority Issues Section */}
                   {mediumCount > 0 && (
-                    <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-3 pb-2">
                         <div className="flex items-center gap-2 flex-1">
                           <div className="w-1.5 h-8 bg-gradient-to-b from-amber-500 to-amber-600 rounded-full shadow-sm" />
@@ -391,7 +401,7 @@ const ValidationResultPanel = ({
                           </div>
                         </div>
                       </div>
-                      <div className="space-y-3">
+                      <div className="flex flex-col gap-1">
                         {groupedIssues.medium.map((issue, idx) => (
                           <IssueCard 
                             key={issue.id || `medium-issue-${idx}`} 
@@ -407,7 +417,7 @@ const ValidationResultPanel = ({
 
                   {/* Low Priority Issues Section */}
                   {lowCount > 0 && (
-                    <div className="space-y-3">
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-3 pb-2">
                         <div className="flex items-center gap-2 flex-1">
                           <div className="w-1.5 h-8 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full shadow-sm" />
@@ -421,7 +431,7 @@ const ValidationResultPanel = ({
                           </div>
                         </div>
                       </div>
-                      <div className="space-y-3">
+                      <div className="flex flex-col gap-1">
                         {groupedIssues.low.map((issue, idx) => (
                           <IssueCard 
                             key={issue.id || `low-issue-${idx}`} 
@@ -472,7 +482,7 @@ const ValidationResultPanel = ({
             {/* Enhanced Loading Indicator for Current Chunk */}
             {isValidating && (
               <div className="bg-gradient-to-br from-card to-card/50 border-2 border-border rounded-xl p-6 shadow-lg">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1">
                   <div className="relative w-12 h-12 flex-shrink-0">
                     <div className="absolute inset-0 border-4 border-primary/20 rounded-full" />
                     <div className="absolute inset-0 border-4 border-primary border-t-transparent rounded-full animate-spin" />
