@@ -252,25 +252,31 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                   totalSteps: data.total_steps,
                 }, 'ChatDialog');
                 
-                setAgentStatus(prev => ({
-                  ...prev,
-                  phase: data.phase,
-                  message: data.message,
-                  currentStep: data.current_step,
-                  totalSteps: data.total_steps,
-                  stepDescription: data.step_description,
-                }));
+                setAgentStatus(prev => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    phase: data.phase,
+                    message: data.message,
+                    currentStep: data.current_step,
+                    totalSteps: data.total_steps,
+                    stepDescription: data.step_description,
+                  };
+                });
               } else if (data.type === 'todo_list') {
                 logger.info('[Agent Event] TODO list received', { 
                   todoCount: data.todo_list?.length || 0,
                   message: data.message,
                 }, 'ChatDialog');
                 
-                setAgentStatus(prev => ({
-                  ...prev,
-                  todoList: data.todo_list,
-                  message: data.message,
-                }));
+                setAgentStatus(prev => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    todoList: data.todo_list,
+                    message: data.message,
+                  };
+                });
               } else if (data.type === 'tool_result') {
                 logger.info('[Agent Event] Tool result', { 
                   step: data.step,
@@ -290,7 +296,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                 
                 // Update specific todo item status
                 setAgentStatus(prev => {
-                  if (!prev?.todoList) return prev;
+                  if (!prev || !prev.todoList) return prev;
                   const updatedList = [...prev.todoList];
                   const todoIndex = updatedList.findIndex(t => t.id === data.todo_id);
                   
