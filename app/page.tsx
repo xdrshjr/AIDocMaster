@@ -26,6 +26,7 @@ export default function Home() {
   const [isExportReady, setIsExportReady] = useState(false);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [docValidationLeftPanelWidth, setDocValidationLeftPanelWidth] = useState(60);
+  const [selectedModelId, setSelectedModelId] = useState<string | undefined>(undefined);
   
   // AI Chat state
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -34,6 +35,31 @@ export default function Home() {
 
   useEffect(() => {
     logger.info('Home component mounted', { initialTask: activeTaskId, locale }, 'Home');
+    
+    // Load default model on mount
+    const loadDefaultModel = async () => {
+      try {
+        logger.debug('Loading default model for document validation', undefined, 'Home');
+        const { getDefaultModel } = await import('@/lib/modelConfig');
+        const defaultModel = await getDefaultModel();
+        
+        if (defaultModel) {
+          setSelectedModelId(defaultModel.id);
+          logger.success('Default model loaded', { 
+            modelId: defaultModel.id, 
+            modelName: defaultModel.name 
+          }, 'Home');
+        } else {
+          logger.warn('No default model configured', undefined, 'Home');
+        }
+      } catch (error) {
+        logger.error('Failed to load default model', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }, 'Home');
+      }
+    };
+    
+    loadDefaultModel();
   }, [locale]);
 
   const tasks = [
@@ -180,6 +206,14 @@ export default function Home() {
     setDocValidationLeftPanelWidth(width);
   };
 
+  const handleSelectedModelIdChange = (modelId: string) => {
+    logger.info('Selected model changed', { 
+      previousModelId: selectedModelId, 
+      newModelId: modelId 
+    }, 'Home');
+    setSelectedModelId(modelId);
+  };
+
   return (
     <div className="h-screen flex flex-col">
       <Header 
@@ -213,6 +247,8 @@ export default function Home() {
               onValidationResultsChange={handleValidationResultsChange}
               leftPanelWidth={docValidationLeftPanelWidth}
               onLeftPanelWidthChange={handleDocValidationPanelWidthChange}
+              selectedModelId={selectedModelId}
+              onSelectedModelIdChange={handleSelectedModelIdChange}
             />
           )}
         </main>

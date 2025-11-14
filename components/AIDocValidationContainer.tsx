@@ -54,6 +54,8 @@ interface AIDocValidationContainerProps {
   onValidationResultsChange: (results: ValidationResult[] | ((prev: ValidationResult[]) => ValidationResult[])) => void;
   leftPanelWidth: number;
   onLeftPanelWidthChange: (width: number) => void;
+  selectedModelId?: string;
+  onSelectedModelIdChange?: (modelId: string) => void;
 }
 
 const AIDocValidationContainer = ({ 
@@ -64,6 +66,8 @@ const AIDocValidationContainer = ({
   onValidationResultsChange,
   leftPanelWidth,
   onLeftPanelWidthChange,
+  selectedModelId,
+  onSelectedModelIdChange,
 }: AIDocValidationContainerProps) => {
   const [isResizing, setIsResizing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -301,6 +305,7 @@ const AIDocValidationContainer = ({
       totalChunks: chunks.length,
       existingResultsCount: validationResults.length,
       language: locale,
+      selectedModelId: selectedModelId || 'default',
       note: 'Validation results will be accumulated and sorted by severity',
     }, 'AIDocValidationContainer');
 
@@ -323,6 +328,7 @@ const AIDocValidationContainer = ({
           chunkIndex: i,
           chunkLength: chunks[i].length,
           language: locale,
+          modelId: selectedModelId || 'default',
         }, 'AIDocValidationContainer');
 
         // Get appropriate API URL based on environment
@@ -333,7 +339,7 @@ const AIDocValidationContainer = ({
           language: locale,
         }, 'AIDocValidationContainer');
 
-        // Call validation API with language parameter
+        // Call validation API with language parameter and selected model
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -344,6 +350,7 @@ const AIDocValidationContainer = ({
             chunkIndex: i,
             totalChunks: chunks.length,
             language: locale,
+            modelId: selectedModelId, // Include selected model ID
           }),
         });
 
@@ -877,6 +884,8 @@ const AIDocValidationContainer = ({
           onExportReady={handleExportReady}
           onHighlightClick={handleHighlightClick}
           onDocumentUpload={handleDocumentUpload}
+          selectedModelId={selectedModelId}
+          onModelChange={onSelectedModelIdChange}
         />
       </div>
 

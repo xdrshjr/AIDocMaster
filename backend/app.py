@@ -123,14 +123,17 @@ class ConfigLoader:
                 # Get current UTC timestamp
                 from datetime import timezone
                 current_time = datetime.now(timezone.utc)
-                model_id = f'model_{current_time.timestamp()}'
                 
-                # Create default model configuration
+                # Create IDs for two default models
+                qwen_model_id = f'model_{current_time.timestamp()}'
+                deepseek_model_id = f'model_{current_time.timestamp() + 1}'
+                
+                # Create default model configuration with two models
                 default_config = {
                     'models': [
                         {
-                            'id': model_id,
-                            'name': 'Qwen Max (Default)',
+                            'id': qwen_model_id,
+                            'name': 'Qwen Max',
                             'apiUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                             'apiKey': 'sk-a5f209d824d54b6883fbc397f9fb4e28',
                             'modelName': 'qwen-max-latest',
@@ -138,9 +141,20 @@ class ConfigLoader:
                             'isEnabled': True,
                             'createdAt': current_time.isoformat(),
                             'updatedAt': current_time.isoformat()
+                        },
+                        {
+                            'id': deepseek_model_id,
+                            'name': 'DeepSeek V3',
+                            'apiUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                            'apiKey': 'sk-a5f209d824d54b6883fbc397f9fb4e28',
+                            'modelName': 'deepseek-v3',
+                            'isDefault': False,
+                            'isEnabled': True,
+                            'createdAt': current_time.isoformat(),
+                            'updatedAt': current_time.isoformat()
                         }
                     ],
-                    'defaultModelId': model_id
+                    'defaultModelId': qwen_model_id
                 }
                 
                 # Save default configuration
@@ -148,7 +162,8 @@ class ConfigLoader:
                     json.dump(default_config, f, indent=2, ensure_ascii=False)
                 
                 app.logger.info('Default model configuration created successfully', extra={
-                    'modelName': 'qwen-max-latest',
+                    'models': ['qwen-max-latest', 'deepseek-v3'],
+                    'defaultModel': 'qwen-max-latest',
                     'apiUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                     'path': str(self.config_path)
                 })
@@ -211,28 +226,69 @@ class ConfigLoader:
         app.logger.warning('No enabled models found')
         return None
     
-    def get_llm_config(self):
+    def get_model_by_id(self, model_id):
+        """Get model by ID from configurations"""
+        app.logger.debug(f'Getting model by ID: {model_id}')
+        
+        configs = self.load_model_configs()
+        models = configs.get('models', [])
+        
+        if not models:
+            app.logger.warning('No models configured')
+            return None
+        
+        # Find model by ID
+        model = next(
+            (m for m in models if m.get('id') == model_id),
+            None
+        )
+        
+        if model:
+            if not model.get('isEnabled', True):
+                app.logger.warning(f'Model {model_id} is disabled')
+                return None
+            app.logger.info(f'Found model by ID: {model.get("name")} ({model.get("modelName")})')
+            return model
+        
+        app.logger.warning(f'Model with ID {model_id} not found')
+        return None
+    
+    def get_llm_config(self, model_id=None):
         """
         Get LLM configuration for API calls
         Uses user-configured models from persistent storage
         No longer depends on environment variables
+        
+        Args:
+            model_id: Optional model ID to use specific model. If None, uses default model.
         """
-        app.logger.info('Getting LLM configuration from user settings')
+        if model_id:
+            app.logger.info(f'Getting LLM configuration for specific model: {model_id}')
+        else:
+            app.logger.info('Getting LLM configuration from default model')
         
         try:
-            # Get default model from user configuration or persistent storage
-            default_model = self.get_default_model()
+            # Get model from user configuration or persistent storage
+            if model_id:
+                selected_model = self.get_model_by_id(model_id)
+                if not selected_model:
+                    app.logger.warning(f'Specified model {model_id} not found, falling back to default')
+                    selected_model = self.get_default_model()
+            else:
+                selected_model = self.get_default_model()
             
-            if default_model:
+            if selected_model:
                 config = {
-                    'apiKey': default_model.get('apiKey', ''),
-                    'apiUrl': default_model.get('apiUrl', ''),
-                    'modelName': default_model.get('modelName', ''),
+                    'apiKey': selected_model.get('apiKey', ''),
+                    'apiUrl': selected_model.get('apiUrl', ''),
+                    'modelName': selected_model.get('modelName', ''),
                     'timeout': 120  # 120 seconds timeout
                 }
                 
-                app.logger.info(f'Using user-configured model: {config["modelName"]} at {config["apiUrl"]}', extra={
+                app.logger.info(f'Using model: {config["modelName"]} at {config["apiUrl"]}', extra={
                     'source': 'User Settings',
+                    'modelId': selected_model.get('id'),
+                    'modelDisplayName': selected_model.get('name'),
                     'modelName': config['modelName'],
                     'apiUrl': config['apiUrl'],
                     'hasApiKey': bool(config['apiKey'])
@@ -481,6 +537,7 @@ def document_validation():
         chunk_index = data.get('chunkIndex', 0)
         total_chunks = data.get('totalChunks', 1)
         language = data.get('language', 'en')
+        model_id = data.get('modelId')  # Get optional model ID
         
         if not content or not isinstance(content, str):
             app.logger.warning(f'Invalid content in validation request: {type(content)}')
@@ -491,10 +548,10 @@ def document_validation():
             app.logger.warning(f'Unsupported language "{language}" received, defaulting to English')
             language = 'en'
         
-        app.logger.info(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, content length: {len(content)}, language: {language}, note: results will be accumulated and sorted by severity on frontend')
+        app.logger.info(f'Processing validation request: chunk {chunk_index + 1}/{total_chunks}, content length: {len(content)}, language: {language}, modelId: {model_id or "default"}, note: results will be accumulated and sorted by severity on frontend')
         
-        # Get and validate LLM configuration
-        config = config_loader.get_llm_config()
+        # Get and validate LLM configuration with specified model ID
+        config = config_loader.get_llm_config(model_id=model_id)
         
         if config is None:
             app.logger.error('LLM configuration not available - no model configured')

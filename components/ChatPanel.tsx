@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import { Loader2, Trash2, Bot } from 'lucide-react';
+import { Loader2, Trash2, Bot, Trash } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { logger } from '@/lib/logger';
@@ -17,6 +17,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
+import { loadModelConfigs, getDefaultModel, type ModelConfig } from '@/lib/modelConfig';
 
 export interface Message extends ChatMessageType {
   id: string;
@@ -41,6 +42,9 @@ const ChatPanel = ({
   const dict = getDictionary(locale);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [availableModels, setAvailableModels] = useState<ModelConfig[]>([]);
+  const [selectedModel, setSelectedModel] = useState<ModelConfig | null>(null);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,6 +53,52 @@ const ChatPanel = ({
       messagesInConversation: conversationId ? (messagesMap.get(conversationId)?.length || 0) : 0,
     });
   }, [conversationId]);
+
+  // Load available models on mount
+  useEffect(() => {
+    const loadModels = async () => {
+      setIsLoadingModels(true);
+      logger.info('Loading available models for selection', undefined, 'ChatPanel');
+      
+      try {
+        const configList = await loadModelConfigs();
+        const enabledModels = configList.models.filter(m => m.isEnabled !== false);
+        
+        logger.info('Models loaded for selector', {
+          totalModels: configList.models.length,
+          enabledModels: enabledModels.length,
+        }, 'ChatPanel');
+        
+        setAvailableModels(enabledModels);
+        
+        // Set default model as selected
+        const defaultModel = await getDefaultModel();
+        if (defaultModel) {
+          setSelectedModel(defaultModel);
+          logger.info('Default model selected', {
+            modelId: defaultModel.id,
+            modelName: defaultModel.name,
+          }, 'ChatPanel');
+        } else if (enabledModels.length > 0) {
+          setSelectedModel(enabledModels[0]);
+          logger.info('No default model, selected first enabled model', {
+            modelId: enabledModels[0].id,
+            modelName: enabledModels[0].name,
+          }, 'ChatPanel');
+        } else {
+          logger.warn('No enabled models available', undefined, 'ChatPanel');
+        }
+      } catch (error) {
+        logger.error('Failed to load models for selector', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }, 'ChatPanel');
+      } finally {
+        setIsLoadingModels(false);
+      }
+    };
+    
+    loadModels();
+  }, []);
 
   // Get messages for current conversation
   const messages = conversationId ? (messagesMap.get(conversationId) || []) : [];
@@ -519,6 +569,53 @@ const ChatPanel = ({
     }, 'ChatPanel');
   };
 
+  const handleClearAll = () => {
+    if (!conversationId) {
+      logger.error('No active conversation to clear all', undefined, 'ChatPanel');
+      return;
+    }
+
+    logger.info('Clearing all chat messages', { 
+      currentMessageCount: messages.length,
+      conversationId 
+    }, 'ChatPanel');
+    
+    // Reset to only the welcome message
+    const welcomeMsg: Message = {
+      id: `welcome-${conversationId}`,
+      role: 'assistant',
+      content: dict.chat.welcomeMessage,
+      timestamp: new Date(),
+    };
+    
+    const newMapForClearAll = new Map(messagesMap);
+    newMapForClearAll.set(conversationId, [welcomeMsg]);
+    onMessagesMapChange(newMapForClearAll);
+    
+    setStreamingContent('');
+    
+    logger.info('All messages cleared, reset to welcome message', { 
+      previousMessageCount: messages.length,
+      conversationId 
+    }, 'ChatPanel');
+  };
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const modelId = e.target.value;
+    const model = availableModels.find(m => m.id === modelId);
+    
+    if (model) {
+      setSelectedModel(model);
+      logger.info('Model selection changed', {
+        modelId: model.id,
+        modelName: model.name,
+        displayName: model.name,
+      }, 'ChatPanel');
+    } else {
+      logger.warn('Selected model not found', { modelId }, 'ChatPanel');
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-background">
       {/* Messages Area */}
@@ -567,18 +664,57 @@ const ChatPanel = ({
         )}
       </div>
 
-      {/* Clear Button */}
-      <div className="px-6 py-3 border-t border-border/50 bg-background/50">
-        <button
-          onClick={handleClearChat}
-          disabled={messages.length <= 1 || isLoading}
-          className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-border/50 hover:shadow-sm"
-          aria-label="Clear chat context"
-          tabIndex={0}
-        >
-          <Trash2 className="w-4 h-4" />
-          <span className="font-medium">{dict.chat.clearButton}</span>
-        </button>
+      {/* Model Selector and Clear Buttons */}
+      <div className="px-6 py-3 border-t border-border/50 bg-background/50 flex items-center justify-between gap-4">
+        {/* Model Selector - Left */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="model-selector" className="text-sm text-muted-foreground font-medium whitespace-nowrap">
+            {dict.chat.modelSelector}:
+          </label>
+          <select
+            id="model-selector"
+            value={selectedModel?.id || ''}
+            onChange={handleModelChange}
+            disabled={isLoadingModels || availableModels.length === 0 || isLoading}
+            className="px-3 py-1.5 text-sm bg-background border border-input rounded-md hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Select AI model"
+          >
+            {availableModels.length === 0 ? (
+              <option value="">{dict.chat.noModelsConfigured}</option>
+            ) : (
+              availableModels.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+
+        {/* Clear Buttons - Right */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleClearChat}
+            disabled={messages.length <= 1 || isLoading}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-border/50"
+            aria-label="Clear chat context"
+            tabIndex={0}
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="font-medium">{dict.chat.clearButton}</span>
+          </button>
+          
+          <button
+            onClick={handleClearAll}
+            disabled={messages.length <= 1 || isLoading}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-destructive/50"
+            aria-label="Clear all messages"
+            tabIndex={0}
+          >
+            <Trash className="w-4 h-4" />
+            <span className="font-medium">{dict.chat.clearAllButton}</span>
+          </button>
+        </div>
       </div>
 
       {/* Input Area */}

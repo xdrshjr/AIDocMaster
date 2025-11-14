@@ -136,9 +136,13 @@ const en = {
     errorMessage: 'Sorry, I encountered an error. Please try again.',
     configError: 'Chat is not configured. Please check your settings.',
     clearButton: 'Clear',
+    clearAllButton: 'Clear All',
     clearedMessage: '✓ Chat cleared',
+    clearedAllMessage: '✓ All messages cleared',
     newConversation: 'New Conversation',
     conversations: 'Conversations',
+    modelSelector: 'Model',
+    noModelsConfigured: 'No models configured',
   },
 };
 
@@ -274,9 +278,13 @@ const zh = {
     errorMessage: '抱歉，遇到了错误。请重试。',
     configError: '聊天未配置。请检查您的设置。',
     clearButton: '清除',
+    clearAllButton: '清空所有',
     clearedMessage: '✓ 聊天已清除',
+    clearedAllMessage: '✓ 所有消息已清空',
     newConversation: '新对话',
     conversations: '对话列表',
+    modelSelector: '模型',
+    noModelsConfigured: '未配置模型',
   },
 };
 

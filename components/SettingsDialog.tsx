@@ -7,7 +7,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Save, Star, Power, Edit, XCircle } from 'lucide-react';
+import { X, Plus, Trash2, Save, Star, Power, Edit, XCircle, GripVertical, Check } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import {
   loadModelConfigs,
@@ -17,6 +17,8 @@ import {
   setDefaultModel,
   toggleModelEnabled,
   clearAllModels,
+  reorderModelConfigs,
+  saveModelConfigs,
   type ModelConfig,
   type ModelConfigList,
 } from '@/lib/modelConfig';
@@ -32,6 +34,8 @@ type SettingTab = 'models';
 const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   const [activeTab, setActiveTab] = useState<SettingTab>('models');
   const [models, setModels] = useState<ModelConfig[]>([]);
+  const [stagedModels, setStagedModels] = useState<ModelConfig[]>([]);
+  const [hasChanges, setHasChanges] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
@@ -46,6 +50,9 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   // Edit mode state
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+
+  // Drag and drop state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     logger.component('SettingsDialog', 'mounted', { isOpen });
@@ -66,6 +73,8 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
     try {
       const configList: ModelConfigList = await loadModelConfigs();
       setModels(configList.models);
+      setStagedModels(JSON.parse(JSON.stringify(configList.models))); // Deep copy
+      setHasChanges(false);
       
       logger.success('Model configurations loaded', {
         count: configList.models.length,
@@ -102,9 +111,8 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         setSuccess('Model added successfully!');
         handleResetForm();
         
-        // Reload models and sync to cookies
+        // Reload models to get the newly added model
         await handleLoadModels();
-        await syncModelConfigsToCookies();
       } else {
         throw new Error(result.error || 'Failed to add model');
       }
@@ -145,9 +153,8 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         setSuccess('Model updated successfully!');
         handleResetForm();
         
-        // Reload models and sync to cookies
+        // Reload models to reflect the update
         await handleLoadModels();
-        await syncModelConfigsToCookies();
       } else {
         throw new Error(result.error || 'Failed to update model');
       }
@@ -195,7 +202,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   };
 
   const handleClearAllModels = async () => {
-    const modelCount = models.length;
+    const modelCount = stagedModels.length;
     
     if (modelCount === 0) {
       logger.info('No models to clear', undefined, 'SettingsDialog');
@@ -223,9 +230,8 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         // Reset form if it was open
         handleResetForm();
         
-        // Reload models and sync to cookies
+        // Reload models to get empty state
         await handleLoadModels();
-        await syncModelConfigsToCookies();
       } else {
         throw new Error(result.error || 'Failed to clear all models');
       }
@@ -256,9 +262,8 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         logger.success('Model deleted successfully', { id, name }, 'SettingsDialog');
         setSuccess('Model deleted successfully!');
         
-        // Reload models and sync to cookies
+        // Reload models to reflect deletion
         await handleLoadModels();
-        await syncModelConfigsToCookies();
       } else {
         throw new Error(result.error || 'Failed to delete model');
       }
@@ -299,33 +304,33 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
     }
   };
 
-  const handleToggleEnabled = async (id: string, name: string, currentStatus: boolean) => {
-    logger.info('Toggling model enabled status', { id, name, currentStatus }, 'SettingsDialog');
-    setIsLoading(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      const result = await toggleModelEnabled(id);
-
-      if (result.success) {
-        const newStatus = result.isEnabled ? 'enabled' : 'disabled';
-        logger.success('Model enabled status toggled', { id, name, newStatus }, 'SettingsDialog');
-        setSuccess(`"${name}" ${newStatus} successfully!`);
+  const handleStagedToggleEnabled = (id: string) => {
+    logger.info('Toggling model enabled status (staged)', { id }, 'SettingsDialog');
+    
+    const updatedModels = stagedModels.map(model => {
+      if (model.id === id) {
+        const newEnabled = !model.isEnabled;
         
-        // Reload models and sync to cookies
-        await handleLoadModels();
-        await syncModelConfigsToCookies();
-      } else {
-        throw new Error(result.error || 'Failed to toggle model status');
+        // If disabling the default model, set first enabled model as default
+        if (!newEnabled && model.isDefault) {
+          const firstEnabledIndex = stagedModels.findIndex(m => m.id !== id && m.isEnabled !== false);
+          if (firstEnabledIndex >= 0) {
+            stagedModels[firstEnabledIndex].isDefault = true;
+            logger.debug('Transferring default to another enabled model', {
+              newDefaultId: stagedModels[firstEnabledIndex].id,
+            }, 'SettingsDialog');
+          }
+          return { ...model, isEnabled: newEnabled, isDefault: false };
+        }
+        
+        return { ...model, isEnabled: newEnabled };
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to toggle model status';
-      logger.error('Failed to toggle model status', { error: errorMessage, id }, 'SettingsDialog');
-      setError(errorMessage);
-    } finally {
-      setIsLoading(false);
-    }
+      return model;
+    });
+    
+    setStagedModels(updatedModels);
+    setHasChanges(true);
+    logger.debug('Model enabled status toggled in staged changes', { id }, 'SettingsDialog');
   };
 
   const handleClose = () => {
@@ -349,6 +354,115 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
     logger.debug('Canceling form', { isEditMode }, 'SettingsDialog');
     handleResetForm();
     setError('');
+  };
+
+  const handleDragStart = (index: number) => {
+    logger.debug('Drag started', { index }, 'SettingsDialog');
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    
+    if (draggedIndex === null || draggedIndex === index) {
+      return;
+    }
+
+    logger.debug('Drag over', { draggedIndex, targetIndex: index }, 'SettingsDialog');
+
+    const newModels = [...stagedModels];
+    const draggedModel = newModels[draggedIndex];
+    
+    // Remove from old position
+    newModels.splice(draggedIndex, 1);
+    // Insert at new position
+    newModels.splice(index, 0, draggedModel);
+
+    // Update default to first model
+    newModels.forEach((model, idx) => {
+      model.isDefault = idx === 0;
+    });
+
+    setStagedModels(newModels);
+    setDraggedIndex(index);
+    setHasChanges(true);
+  };
+
+  const handleDragEnd = () => {
+    logger.debug('Drag ended', undefined, 'SettingsDialog');
+    setDraggedIndex(null);
+  };
+
+  const handleConfirmChanges = async () => {
+    logger.info('Confirming model configuration changes', {
+      stagedCount: stagedModels.length,
+      hasChanges,
+    }, 'SettingsDialog');
+
+    // Validate: default model must be enabled
+    const defaultModel = stagedModels.find(m => m.isDefault);
+    if (defaultModel && !defaultModel.isEnabled) {
+      const errorMsg = 'Default model must be enabled';
+      logger.warn(errorMsg, { defaultModelId: defaultModel.id }, 'SettingsDialog');
+      setError(errorMsg);
+      return;
+    }
+
+    // Validate: at least one model must be enabled
+    const hasEnabledModel = stagedModels.some(m => m.isEnabled !== false);
+    if (!hasEnabledModel) {
+      const errorMsg = 'At least one model must be enabled';
+      logger.warn(errorMsg, undefined, 'SettingsDialog');
+      setError(errorMsg);
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      // Save the staged models
+      const configList: ModelConfigList = {
+        models: stagedModels,
+        defaultModelId: stagedModels.find(m => m.isDefault)?.id,
+      };
+
+      const result = await saveModelConfigs(configList);
+
+      if (result.success) {
+        logger.success('Model configurations saved successfully', {
+          count: stagedModels.length,
+        }, 'SettingsDialog');
+
+        setSuccess('Model configurations saved successfully!');
+        setModels(JSON.parse(JSON.stringify(stagedModels))); // Update main state
+        setHasChanges(false);
+
+        // Sync to cookies
+        await syncModelConfigsToCookies();
+      } else {
+        throw new Error(result.error || 'Failed to save configurations');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save configurations';
+      logger.error('Failed to save model configurations', { error: errorMessage }, 'SettingsDialog');
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCancelChanges = () => {
+    logger.info('Canceling model configuration changes', undefined, 'SettingsDialog');
+    
+    // Revert to original models
+    setStagedModels(JSON.parse(JSON.stringify(models)));
+    setHasChanges(false);
+    setError('');
+    setSuccess('');
+    
+    logger.debug('Changes reverted to saved state', undefined, 'SettingsDialog');
   };
 
   if (!isOpen) return null;
@@ -401,7 +515,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
             {/* Models Tab Content */}
             {activeTab === 'models' && (
-              <div className="flex-1 flex flex-col overflow-hidden p-4">
+              <div className="flex-1 flex flex-col overflow-hidden p-4 relative">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-bold text-foreground">LLM Models</h3>
                   {!isFormVisible && (
@@ -523,25 +637,35 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                 )}
 
                 {/* Model List */}
-                <div className="flex-1 overflow-y-auto">
-                  {isLoading && models.length === 0 ? (
+                <div className="flex-1 overflow-y-auto mb-16">
+                  {isLoading && stagedModels.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       Loading models...
                     </div>
-                  ) : models.length === 0 ? (
+                  ) : stagedModels.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       No models configured. Add your first model to get started.
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {models.map((model) => (
+                      {stagedModels.map((model, index) => (
                         <div
                           key={model.id}
-                          className={`p-4 bg-card border-4 border-border shadow-sm hover:shadow-md transition-all ${
+                          draggable={!isFormVisible}
+                          onDragStart={() => handleDragStart(index)}
+                          onDragOver={(e) => handleDragOver(e, index)}
+                          onDragEnd={handleDragEnd}
+                          className={`p-4 bg-card border-4 border-border shadow-sm hover:shadow-md transition-all cursor-move ${
                             model.isEnabled === false ? 'opacity-60' : ''
-                          }`}
+                          } ${draggedIndex === index ? 'opacity-50' : ''}`}
                         >
-                          <div className="flex items-start justify-between">
+                          <div className="flex items-start justify-between gap-4">
+                            {/* Drag Handle */}
+                            <div className="flex items-center pt-1">
+                              <GripVertical className="w-5 h-5 text-muted-foreground" />
+                            </div>
+
+                            {/* Model Info */}
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-2">
                                 <h4 className="text-md font-bold text-foreground">
@@ -573,10 +697,11 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                               </div>
                             </div>
 
-                            <div className="flex gap-2 ml-4">
+                            {/* Action Buttons - Right Side */}
+                            <div className="flex items-center gap-2">
                               <button
                                 onClick={() => handleEditModel(model)}
-                                disabled={isLoading}
+                                disabled={isLoading || isFormVisible}
                                 className="p-2 bg-blue-600 text-white border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 aria-label="Edit Model"
                                 title="Edit Model"
@@ -584,37 +709,32 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                                 <Edit className="w-4 h-4" />
                               </button>
                               <button
-                                onClick={() => handleToggleEnabled(model.id, model.name, model.isEnabled !== false)}
-                                disabled={isLoading}
-                                className={`p-2 border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                                  model.isEnabled !== false
-                                    ? 'bg-green-600 text-white'
-                                    : 'bg-muted text-muted-foreground'
-                                }`}
-                                aria-label={model.isEnabled !== false ? 'Disable Model' : 'Enable Model'}
-                                title={model.isEnabled !== false ? 'Disable Model' : 'Enable Model'}
-                              >
-                                <Power className="w-4 h-4" />
-                              </button>
-                              {!model.isDefault && model.isEnabled !== false && (
-                                <button
-                                  onClick={() => handleSetDefault(model.id, model.name)}
-                                  disabled={isLoading}
-                                  className="p-2 bg-secondary text-secondary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                  aria-label="Set as Default"
-                                  title="Set as Default"
-                                >
-                                  <Star className="w-4 h-4" />
-                                </button>
-                              )}
-                              <button
                                 onClick={() => handleDeleteModel(model.id, model.name)}
-                                disabled={isLoading}
+                                disabled={isLoading || isFormVisible}
                                 className="p-2 bg-destructive text-destructive-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 aria-label="Delete Model"
                                 title="Delete Model"
                               >
                                 <Trash2 className="w-4 h-4" />
+                              </button>
+                              
+                              {/* Enable/Disable Toggle Switch */}
+                              <button
+                                onClick={() => handleStagedToggleEnabled(model.id)}
+                                disabled={isLoading || isFormVisible}
+                                className={`relative inline-flex h-8 w-14 items-center rounded-full border-2 border-border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  model.isEnabled !== false
+                                    ? 'bg-green-600'
+                                    : 'bg-muted'
+                                }`}
+                                aria-label={model.isEnabled !== false ? 'Disable Model' : 'Enable Model'}
+                                title={model.isEnabled !== false ? 'Enabled' : 'Disabled'}
+                              >
+                                <span
+                                  className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                                    model.isEnabled !== false ? 'translate-x-7' : 'translate-x-1'
+                                  }`}
+                                />
                               </button>
                             </div>
                           </div>
@@ -623,6 +743,27 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                     </div>
                   )}
                 </div>
+
+                {/* Bottom Action Bar - Confirm/Cancel Buttons */}
+                {!isFormVisible && stagedModels.length > 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-background border-t-4 border-border p-4 flex items-center justify-end gap-3">
+                    <button
+                      onClick={handleCancelChanges}
+                      disabled={!hasChanges || isLoading}
+                      className="px-6 py-2 bg-muted text-foreground border-2 border-border hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleConfirmChanges}
+                      disabled={!hasChanges || isLoading}
+                      className="px-6 py-2 bg-primary text-primary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium"
+                    >
+                      <Check className="w-4 h-4" />
+                      Confirm Changes
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

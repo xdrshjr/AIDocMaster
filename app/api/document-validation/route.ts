@@ -23,11 +23,12 @@ export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body = await request.json();
-    const { content, chunkIndex, totalChunks, language } = body as { 
+    const { content, chunkIndex, totalChunks, language, modelId } = body as { 
       content: string; 
       chunkIndex: number; 
       totalChunks: number;
       language?: string;
+      modelId?: string;
     };
 
     // Validate input
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
       chunkIndex,
       totalChunks,
       language: normalizedLanguage,
+      modelId: modelId || 'default',
     }, 'API:DocumentValidation');
 
     // Build Flask backend URL
@@ -66,6 +68,7 @@ export async function POST(request: NextRequest) {
       totalChunks,
       contentLength: content.length,
       language: normalizedLanguage,
+      modelId: modelId || 'default',
     }, 'API:DocumentValidation');
 
     // Forward request to Flask backend
@@ -85,6 +88,7 @@ export async function POST(request: NextRequest) {
           chunkIndex,
           totalChunks,
           language: normalizedLanguage,
+          modelId: modelId, // Pass modelId to Flask backend
         }),
         signal: controller.signal,
       });

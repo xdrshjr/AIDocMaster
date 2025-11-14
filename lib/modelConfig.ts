@@ -630,6 +630,84 @@ export const getModelById = async (id: string): Promise<ModelConfig | null> => {
 };
 
 /**
+ * Reorder model configurations
+ * The first model in the array becomes the default model
+ */
+export const reorderModelConfigs = async (orderedIds: string[]): Promise<{ success: boolean; error?: string }> => {
+  logger.info('Reordering model configurations', {
+    count: orderedIds.length,
+  }, 'ModelConfig');
+
+  try {
+    // Load existing configs
+    const configList = await loadModelConfigs();
+
+    // Create a map for quick lookup
+    const modelMap = new Map(configList.models.map(m => [m.id, m]));
+
+    // Reorder models based on the provided IDs
+    const reorderedModels: ModelConfig[] = [];
+    
+    for (const id of orderedIds) {
+      const model = modelMap.get(id);
+      if (model) {
+        reorderedModels.push(model);
+        modelMap.delete(id);
+      } else {
+        logger.warn('Model ID not found during reorder', { id }, 'ModelConfig');
+      }
+    }
+
+    // Add any remaining models that weren't in the ordered list (shouldn't happen normally)
+    modelMap.forEach(model => {
+      logger.warn('Model not in ordered list, appending to end', {
+        id: model.id,
+        name: model.name,
+      }, 'ModelConfig');
+      reorderedModels.push(model);
+    });
+
+    if (reorderedModels.length === 0) {
+      logger.warn('No models to reorder', undefined, 'ModelConfig');
+      return { success: false, error: 'No models to reorder' };
+    }
+
+    // Set first model as default
+    reorderedModels.forEach((model, index) => {
+      model.isDefault = index === 0;
+      model.updatedAt = new Date().toISOString();
+    });
+
+    configList.models = reorderedModels;
+    configList.defaultModelId = reorderedModels[0].id;
+
+    // Save to storage
+    const saveResult = await saveModelConfigs(configList);
+    
+    if (!saveResult.success) {
+      logger.error('Failed to save reordered models', {
+        error: saveResult.error,
+      }, 'ModelConfig');
+      return { success: false, error: saveResult.error };
+    }
+
+    logger.success('Model configurations reordered successfully', {
+      count: reorderedModels.length,
+      newDefaultId: reorderedModels[0].id,
+      newDefaultName: reorderedModels[0].name,
+    }, 'ModelConfig');
+
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to reorder model configurations', {
+      error: errorMessage,
+    }, 'ModelConfig');
+    return { success: false, error: errorMessage };
+  }
+};
+
+/**
  * Clear all model configurations
  */
 export const clearAllModels = async (): Promise<{ success: boolean; error?: string }> => {

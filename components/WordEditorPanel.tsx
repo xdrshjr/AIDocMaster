@@ -41,6 +41,8 @@ interface WordEditorPanelProps {
   onExportReady?: (ready: boolean) => void;
   onHighlightClick?: (issueId: string, chunkIndex: number) => void;
   onDocumentUpload?: () => void;
+  selectedModelId?: string;
+  onModelChange?: (modelId: string) => void;
 }
 
 export interface WordEditorPanelRef {
@@ -53,13 +55,14 @@ export interface WordEditorPanelRef {
 }
 
 const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
-  ({ onContentChange, onExportReady, onHighlightClick, onDocumentUpload }, ref) => {
+  ({ onContentChange, onExportReady, onHighlightClick, onDocumentUpload, selectedModelId, onModelChange }, ref) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
   const [isUploading, setIsUploading] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string }>>([]);
 
   // Generate default placeholder content
   const getDefaultEditorContent = () => {
@@ -287,6 +290,29 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
 
   useEffect(() => {
     logger.component('WordEditorPanel', 'mounted');
+    
+    // Load available models
+    const loadModels = async () => {
+      try {
+        logger.info('Loading available models for selector', undefined, 'WordEditorPanel');
+        const { loadModelConfigs } = await import('@/lib/modelConfig');
+        const configs = await loadModelConfigs();
+        
+        // Filter enabled models
+        const enabledModels = configs.models.filter(m => m.isEnabled !== false);
+        const modelList = enabledModels.map(m => ({ id: m.id, name: m.name }));
+        
+        setAvailableModels(modelList);
+        logger.success('Loaded available models', { count: modelList.length }, 'WordEditorPanel');
+      } catch (error) {
+        logger.error('Failed to load available models', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }, 'WordEditorPanel');
+      }
+    };
+    
+    loadModels();
+    
     return () => {
       editor?.destroy();
     };
@@ -518,6 +544,12 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     fileInputRef.current?.click();
   };
 
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const modelId = e.target.value;
+    logger.info('Model selection changed', { modelId }, 'WordEditorPanel');
+    onModelChange?.(modelId);
+  };
+
   if (!editor) {
     return <div className="flex items-center justify-center h-full">Loading editor...</div>;
   }
@@ -678,6 +710,25 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
           >
             <Redo className="w-4 h-4" />
           </button>
+
+          {/* Model Selector */}
+          {availableModels.length > 0 && (
+            <>
+              <div className="w-px h-6 bg-border mx-2" />
+              <select
+                value={selectedModelId || ''}
+                onChange={handleModelChange}
+                className="px-3 py-2 border-2 border-border bg-card text-foreground transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none shadow-sm focus:outline-none focus:ring-2 focus:ring-primary text-sm font-medium"
+                aria-label="Select AI Model"
+              >
+                {availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
 
         {/* File Name Display */}
