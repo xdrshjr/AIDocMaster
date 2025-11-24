@@ -17,6 +17,7 @@ import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
 import { loadModelConfigs, getDefaultModel, type ModelConfig } from '@/lib/modelConfig';
+import { cn } from '@/lib/utils';
 
 export interface ChatDialogProps {
   isOpen: boolean;
@@ -25,6 +26,8 @@ export interface ChatDialogProps {
   welcomeMessage?: string;
   getDocumentContent?: () => string;
   updateDocumentContent?: (content: string) => void;
+  variant?: 'modal' | 'embedded';
+  className?: string;
 }
 
 interface Message extends ChatMessageType {
@@ -39,7 +42,11 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?',
   getDocumentContent,
   updateDocumentContent,
+  variant = 'modal',
+  className,
 }, ref) => {
+  const isEmbedded = variant === 'embedded';
+  const shouldRender = isEmbedded || isOpen;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
@@ -55,8 +62,13 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
 
-  // Track viewport height for responsive dialog sizing
+  // Track viewport height for responsive dialog sizing (modal only)
   useEffect(() => {
+    if (isEmbedded) {
+      logger.debug('Embedded chat dialog skips viewport tracking', undefined, 'ChatDialog');
+      return;
+    }
+    
     const updateViewportHeight = () => {
       const height = window.innerHeight;
       setViewportHeight(height);
@@ -88,7 +100,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       window.removeEventListener('resize', handleResize);
       logger.debug('Chat dialog viewport tracking cleaned up', undefined, 'ChatDialog');
     };
-  }, []);
+  }, [isEmbedded]);
 
   // Load available models on mount
   useEffect(() => {
@@ -138,7 +150,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
 
   // Initialize with welcome message
   useEffect(() => {
-    if (isOpen && messages.length === 0) {
+    if (shouldRender && messages.length === 0) {
       const welcomeMsg: Message = {
         id: 'welcome',
         role: 'assistant',
@@ -148,7 +160,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       setMessages([welcomeMsg]);
       logger.component('ChatDialog', 'initialized with welcome message');
     }
-  }, [isOpen, messages.length, welcomeMessage]);
+  }, [shouldRender, messages.length, welcomeMessage]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -821,6 +833,11 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   };
 
   const handleClose = () => {
+    if (isEmbedded) {
+      logger.debug('Embedded chat dialog close ignored', undefined, 'ChatDialog');
+      return;
+    }
+    
     logger.component('ChatDialog', 'closed');
     onClose();
   };
@@ -888,48 +905,64 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isEmbedded) {
+      return;
+    }
+    
     if (e.key === 'Escape') {
       handleClose();
     }
   };
 
-  if (!isOpen) {
+  if (!shouldRender) {
     return null;
   }
 
-  // Calculate chat dialog height as 80% of viewport height
-  // Minimum height of 300px to ensure usability
-  const calculatedHeight = viewportHeight > 0 
-    ? Math.max(Math.floor(viewportHeight * 0.8), 300)
-    : 720; // Default fallback height
+  // Calculate chat dialog height for modal presentation
+  const calculatedHeight = isEmbedded
+    ? undefined
+    : (viewportHeight > 0 ? Math.max(Math.floor(viewportHeight * 0.8), 300) : 720);
 
-  logger.debug('Chat dialog height calculated', {
-    viewportHeight,
-    calculatedHeight,
-    percentage: '80%'
-  }, 'ChatDialog');
+  if (!isEmbedded) {
+    logger.debug('Chat dialog height calculated', {
+      viewportHeight,
+      calculatedHeight,
+      percentage: '80%'
+    }, 'ChatDialog');
+  }
+
+  const containerClassName = isEmbedded
+    ? cn(
+        'h-full w-full bg-background border-l border-border flex flex-col',
+        'rounded-none shadow-none',
+        className
+      )
+    : 'fixed bottom-24 right-6 w-[576px] bg-background border-2 border-border rounded-lg shadow-xl flex flex-col z-50 animate-slideUp';
 
   return (
     <div
       ref={ref}
-      className="fixed bottom-24 right-6 w-[576px] bg-background border-2 border-border rounded-lg shadow-xl flex flex-col z-50 animate-slideUp"
-      style={{ height: `${calculatedHeight}px` }}
-      onKeyDown={handleKeyDown}
-      role="dialog"
+      className={containerClassName}
+      style={!isEmbedded ? { height: `${calculatedHeight}px` } : undefined}
+      onKeyDown={isEmbedded ? undefined : handleKeyDown}
+      role={isEmbedded ? 'region' : 'dialog'}
       aria-label={title}
-      aria-modal="true"
+      aria-modal={isEmbedded ? undefined : 'true'}
+      data-testid={isEmbedded ? 'chat-dialog-embedded' : 'chat-dialog-modal'}
     >
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border bg-muted/50">
         <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-        <button
-          onClick={handleClose}
-          className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
-          aria-label="Close chat"
-          tabIndex={0}
-        >
-          <X className="w-4 h-4" />
-        </button>
+        {!isEmbedded && (
+          <button
+            onClick={handleClose}
+            className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
+            aria-label="Close chat"
+            tabIndex={0}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Messages */}

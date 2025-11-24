@@ -21,8 +21,8 @@ class DocumentAgent:
     Document processing agent using LangGraph workflow
     
     Workflow:
-    1. Plan: Analyze user command and create TODO list
-    2. Execute: Execute each TODO item using available tools
+    1. Plan: Analyze user command and create AgentTodo list
+    2. Execute: Execute each AgentTodo item using available tools
     3. Summarize: Generate final execution summary
     """
     
@@ -93,7 +93,7 @@ class DocumentAgent:
                 }
                 return
             
-            # Ensure all TODO items have 'status' and 'id' fields
+            # Ensure all AgentTodo items have 'status' and 'id' fields
             for idx, item in enumerate(todo_list):
                 if 'status' not in item:
                     item['status'] = 'pending'
@@ -108,11 +108,11 @@ class DocumentAgent:
                           else f"已创建包含 {len(todo_list)} 个步骤的计划"
             }
             
-            logger.info('Phase 2: Executing TODO items', extra={'total_items': len(todo_list)})
+            logger.info('Phase 2: Executing AgentTodo items', extra={'total_items': len(todo_list)})
             
             execution_results = []
             for idx, todo_item in enumerate(todo_list):
-                # Update TODO item status to 'in_progress'
+                # Update AgentTodo item status to 'in_progress'
                 todo_item['status'] = 'in_progress'
                 
                 yield {
@@ -125,7 +125,7 @@ class DocumentAgent:
                               else f"正在执行第 {idx + 1}/{len(todo_list)} 步..."
                 }
                 
-                # Send TODO item status update to 'in_progress'
+                # Send AgentTodo item status update to 'in_progress'
                 yield {
                     "type": "todo_item_update",
                     "todo_id": todo_item.get("id"),
@@ -133,7 +133,7 @@ class DocumentAgent:
                     "step": idx + 1,
                 }
                 
-                logger.info('TODO item status updated to in_progress', extra={
+                logger.info('AgentTodo item status updated to in_progress', extra={
                     'step': f'{idx + 1}/{len(todo_list)}',
                     'todo_id': todo_item.get("id"),
                     'description': todo_item.get("description", "")[:50],
@@ -171,12 +171,12 @@ class DocumentAgent:
                 result = yield from self._execute_todo(refined_todo, idx + 1, len(todo_list))
                 execution_results.append(result)
                 
-                # Update TODO item status based on execution result
+                # Update AgentTodo item status based on execution result
                 is_success = result.get("success", result.get("found", True))
                 final_status = "completed" if is_success else "failed"
                 todo_item['status'] = final_status
                 
-                # Send TODO item status update after execution
+                # Send AgentTodo item status update after execution
                 yield {
                     "type": "todo_item_update",
                     "todo_id": todo_item.get("id"),
@@ -186,7 +186,7 @@ class DocumentAgent:
                     "error": result.get("error") if not is_success else None,
                 }
                 
-                logger.info('TODO item execution completed', extra={
+                logger.info('AgentTodo item execution completed', extra={
                     'step': f'{idx + 1}/{len(todo_list)}',
                     'todo_id': todo_item.get("id"),
                     'status': final_status,
@@ -242,7 +242,7 @@ class DocumentAgent:
     
     def _plan_phase(self, user_command: str) -> Generator[Any, None, Optional[list]]:
         """
-        Planning phase: Create TODO list
+        Planning phase: Create AgentTodo list
         
         Args:
             user_command: User's command
@@ -251,7 +251,7 @@ class DocumentAgent:
             Planning progress
             
         Returns:
-            TODO list or None if failed
+            AgentTodo list or None if failed
         """
         try:
             tool_descriptions = DocumentTools.get_tool_descriptions()
@@ -327,11 +327,11 @@ class DocumentAgent:
                 todo_list = plan_data.get("todo_list", [])
                 reasoning = plan_data.get("reasoning", "")
                 
-                logger.info('[LLM] Successfully parsed TODO list', extra={
+                logger.info('[LLM] Successfully parsed AgentTodo list', extra={
                     'items_count': len(todo_list),
                     'reasoning': reasoning[:100] + '...' if len(reasoning) > 100 else reasoning,
                 })
-                logger.debug('[LLM] TODO list details', extra={
+                logger.debug('[LLM] AgentTodo list details', extra={
                     'todo_list': str(todo_list)[:500],
                 })
                 
@@ -352,10 +352,10 @@ class DocumentAgent:
     
     def _execute_todo(self, todo_item: Dict[str, Any], step_num: int, total_steps: int) -> Generator[Any, None, Dict[str, Any]]:
         """
-        Execute a single TODO item
+        Execute a single AgentTodo item
         
         Args:
-            todo_item: TODO item to execute
+            todo_item: AgentTodo item to execute
             step_num: Current step number
             total_steps: Total number of steps
             
@@ -370,7 +370,7 @@ class DocumentAgent:
             tool_args = todo_item.get("args", {})
             description = todo_item.get("description", "")
             
-            logger.info('Executing TODO item', extra={
+            logger.info('Executing AgentTodo item', extra={
                 'step': f'{step_num}/{total_steps}',
                 'tool': tool_name,
                 'description': description,
@@ -384,7 +384,7 @@ class DocumentAgent:
             result["step"] = step_num
             result["description"] = description
             
-            logger.info('TODO item executed', extra={
+            logger.info('AgentTodo item executed', extra={
                 'step': f'{step_num}/{total_steps}',
                 'success': result.get("success", True),
                 'result_message': result.get("message", "")
@@ -402,7 +402,7 @@ class DocumentAgent:
             return result
             
         except Exception as e:
-            logger.error('TODO execution failed', extra={
+            logger.error('AgentTodo execution failed', extra={
                 'step': f'{step_num}/{total_steps}',
                 'error': str(e)
             }, exc_info=True)
@@ -426,7 +426,7 @@ class DocumentAgent:
         Refine modify_document_text parameters using previous tool results
         
         Args:
-            todo_item: Current TODO item (modify_document_text)
+            todo_item: Current AgentTodo item (modify_document_text)
             prev_result: Previous tool execution result
             user_command: Original user command
             
@@ -434,7 +434,7 @@ class DocumentAgent:
             Refinement progress
             
         Returns:
-            Refined TODO item with accurate parameters, or None if refinement failed
+            Refined AgentTodo item with accurate parameters, or None if refinement failed
         """
         try:
             prev_tool = prev_result.get("tool", "")
@@ -551,7 +551,7 @@ Based on the previous tool's result, extract the accurate original_text. If the 
                 
                 refinement_data = json.loads(json_str)
                 
-                # Create refined TODO item
+                # Create refined AgentTodo item
                 refined_todo = {
                     **todo_item,
                     "args": {
@@ -587,7 +587,7 @@ Based on the previous tool's result, extract the accurate original_text. If the 
         
         Args:
             user_command: Original user command
-            todo_list: List of TODO items
+            todo_list: List of AgentTodo items
             execution_results: Results of execution
             
         Yields:

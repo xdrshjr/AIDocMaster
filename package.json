@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "bundle:python": "node scripts/bundle-python.js",
     "build:desktop": "node scripts/build-desktop.js",
     "build:electron": "electron-builder --win --x64 --config electron-builder.json",
@@ -46,6 +47,8 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tailwindcss/typography": "^0.5.15",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -54,8 +57,10 @@
     "electron-builder": "^24.9.1",
     "eslint": "^9",
     "eslint-config-next": "16.0.1",
+    "jsdom": "^25.0.1",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vitest": "^2.1.9",
     "wait-on": "^7.2.0"
   }
 }

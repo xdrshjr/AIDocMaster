@@ -27,6 +27,7 @@ const en = {
   taskbar: {
     aiDocValidation: 'AI Document Validation',
     aiChat: 'AI Chat',
+    aiAutoWriter: 'AI Document Auto-Writer',
   },
   footer: {
     copyright: '© 2025 DocAIMaster. All rights reserved.',
@@ -169,6 +170,7 @@ const zh = {
   taskbar: {
     aiDocValidation: 'AI文档校验',
     aiChat: 'AI对话',
+    aiAutoWriter: 'AI文档自动写作',
   },
   footer: {
     copyright: '© 2025 DocAIMaster. 保留所有权利。',

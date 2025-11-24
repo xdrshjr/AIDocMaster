@@ -6,8 +6,9 @@ import Footer from '@/components/Footer';
 import Taskbar from '@/components/Taskbar';
 import AIDocValidationContainer from '@/components/AIDocValidationContainer';
 import AIChatContainer from '@/components/AIChatContainer';
+import AIAutoWriterContainer from '@/components/AIAutoWriterContainer';
 import FloatingChatButton from '@/components/FloatingChatButton';
-import { FileCheck, MessageSquare } from 'lucide-react';
+import { FileCheck, MessageSquare, PenSquare } from 'lucide-react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { logger } from '@/lib/logger';
@@ -26,6 +27,7 @@ export default function Home() {
   const [isExportReady, setIsExportReady] = useState(false);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
   const [docValidationLeftPanelWidth, setDocValidationLeftPanelWidth] = useState(60);
+  const [autoWriterLeftPanelWidth, setAutoWriterLeftPanelWidth] = useState(58);
   const [selectedModelId, setSelectedModelId] = useState<string | undefined>(undefined);
   
   // Document content getters/setters for agent
@@ -72,6 +74,12 @@ export default function Home() {
       title: dict.taskbar.aiChat,
       icon: <MessageSquare className="w-4 h-4" />,
       isActive: activeTaskId === 'ai-chat',
+    },
+    {
+      id: 'ai-auto-writer',
+      title: dict.taskbar.aiAutoWriter,
+      icon: <PenSquare className="w-4 h-4" />,
+      isActive: activeTaskId === 'ai-auto-writer',
     },
     {
       id: 'ai-doc-validation',
@@ -264,6 +272,14 @@ export default function Home() {
               onDocumentFunctionsReady={handleDocumentFunctionsReady}
             />
           )}
+          {activeTaskId === 'ai-auto-writer' && (
+            <AIAutoWriterContainer
+              leftPanelWidth={autoWriterLeftPanelWidth}
+              onLeftPanelWidthChange={setAutoWriterLeftPanelWidth}
+              onDocumentFunctionsReady={handleDocumentFunctionsReady}
+              onContentChange={handleContentChange}
+            />
+          )}
         </main>
       </div>
       
@@ -271,7 +287,7 @@ export default function Home() {
       
       {/* Floating Chat Button - only visible when NOT in AI Chat task */}
       <FloatingChatButton 
-        isVisible={activeTaskId !== 'ai-chat'} 
+        isVisible={activeTaskId !== 'ai-chat' && activeTaskId !== 'ai-auto-writer'} 
         getDocumentContent={getDocumentContentFn}
         updateDocumentContent={updateDocumentContentFn}
       />
