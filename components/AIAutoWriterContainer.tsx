@@ -163,6 +163,7 @@ const AIAutoWriterContainer = ({
           getDocumentContent={getEditorContent}
           updateDocumentContent={updateEditorContent}
           className="bg-background"
+          agentVariant="auto-writer"
         />
       </section>
     </div>

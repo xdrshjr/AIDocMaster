@@ -19,6 +19,8 @@ import { buildApiUrl } from '@/lib/apiConfig';
 import { loadModelConfigs, getDefaultModel, type ModelConfig } from '@/lib/modelConfig';
 import { cn } from '@/lib/utils';
 
+export type AgentVariant = 'document' | 'auto-writer';
+
 export interface ChatDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -28,6 +30,7 @@ export interface ChatDialogProps {
   updateDocumentContent?: (content: string) => void;
   variant?: 'modal' | 'embedded';
   className?: string;
+  agentVariant?: AgentVariant;
 }
 
 interface Message extends ChatMessageType {
@@ -44,8 +47,10 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   updateDocumentContent,
   variant = 'modal',
   className,
+  agentVariant = 'document',
 }, ref) => {
   const isEmbedded = variant === 'embedded';
+  const isAutoWriterAgent = agentVariant === 'auto-writer';
   const shouldRender = isEmbedded || isOpen;
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -180,7 +185,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     // Previous execution record will be replaced by new one
     setIsAgentRunning(true);
     setAgentStatus({
-      phase: 'planning',
+      phase: isAutoWriterAgent ? 'intent' : 'planning',
       message: 'Initializing agent...',
     });
     
@@ -190,30 +195,38 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     }, 'ChatDialog');
 
     try {
-      // Get appropriate API URL
-      const apiUrl = await buildApiUrl('/api/agent-validation');
+      const agentEndpoint = isAutoWriterAgent ? '/api/auto-writer' : '/api/agent-validation';
+      const apiUrl = await buildApiUrl(agentEndpoint);
       logger.debug('Using agent validation API URL', { apiUrl }, 'ChatDialog');
 
-      // Get document content from parent
-      const documentContent = getDocumentContent ? getDocumentContent() : "";
-      
-      if (!documentContent || documentContent.trim().length === 0) {
-        throw new Error('No document loaded. Please upload a document first.');
+      let documentContent = '';
+      if (!isAutoWriterAgent) {
+        documentContent = getDocumentContent ? getDocumentContent() : '';
+        if (!documentContent || documentContent.trim().length === 0) {
+          throw new Error('No document loaded. Please upload a document first.');
+        }
+        logger.debug('Got document content for agent', { contentLength: documentContent.length }, 'ChatDialog');
       }
-      
-      logger.debug('Got document content for agent', { contentLength: documentContent.length }, 'ChatDialog');
 
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          command,
-          content: documentContent,
-          language: 'en', // TODO: Get from language context
-          modelId: selectedModel?.id,
-        }),
+        body: JSON.stringify(
+          isAutoWriterAgent
+            ? {
+                prompt: command,
+                language: 'zh',
+                modelId: selectedModel?.id,
+              }
+            : {
+                command,
+                content: documentContent,
+                language: 'en',
+                modelId: selectedModel?.id,
+              }
+        ),
       });
 
       if (!response.ok) {
@@ -257,6 +270,15 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
 
               // Update agent status based on event type
               if (data.type === 'status') {
+                if (isAutoWriterAgent) {
+                  setAgentStatus(prev => ({
+                    ...(prev || { phase: 'intent', message: '' }),
+                    phase: data.phase || prev?.phase || 'status',
+                    message: data.message,
+                    timeline: data.timeline,
+                  }));
+                  continue;
+                }
                 logger.debug('[Agent Event] Status update', { 
                   phase: data.phase, 
                   message: data.message?.substring(0, 50),
@@ -289,6 +311,14 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     message: data.message,
                   };
                 });
+              } else if (isAutoWriterAgent && data.type === 'parameters') {
+                const parameterMessage: Message = {
+                  id: `agent-parameters-${Date.now()}`,
+                  role: 'assistant',
+                  content: `🎯 参数已就绪：\n- 标题：${data.parameters?.title}\n- 段落数：${data.parameters?.paragraph_count}\n- 语调：${data.parameters?.tone}`,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => [...prev, parameterMessage]);
               } else if (data.type === 'tool_result') {
                 logger.info('[Agent Event] Tool result', { 
                   step: data.step,
@@ -374,36 +404,83 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     contentLength: data.updated_content?.length || 0,
                   }, 'ChatDialog');
                 }
+              } else if (data.type === 'section_progress' && isAutoWriterAgent) {
+                setAgentStatus(prev => {
+                  const total = data.total || prev?.totalSteps || 0;
+                  const resolvedTotal = total || data.current || 0;
+                  const todoList =
+                    prev?.todoList && prev.todoList.length === resolvedTotal
+                      ? [...prev.todoList]
+                      : Array.from({ length: resolvedTotal }, (_, index) => ({
+                          id: `section-${index + 1}`,
+                          description: `段落 ${index + 1}`,
+                          status: 'pending' as const,
+                        }));
+                  const currentIndex = Math.max(0, (data.current || 1) - 1);
+                  if (todoList[currentIndex]) {
+                    todoList[currentIndex] = {
+                      ...todoList[currentIndex],
+                      status: 'completed',
+                      result: data.title,
+                    };
+                  }
+                  return {
+                    phase: 'writing',
+                    message: `正在完成段落 ${data.current}/${data.total}`,
+                    currentStep: data.current,
+                    totalSteps: data.total,
+                    todoList,
+                    timeline: prev?.timeline,
+                  };
+                });
+              } else if (data.type === 'article_draft' && isAutoWriterAgent) {
+                if (updateDocumentContent && data.html) {
+                  updateDocumentContent(data.html);
+                }
               } else if (data.type === 'complete') {
                 logger.success('[Agent Event] Agent workflow completed', {
                   message: data.message,
                   hasSummary: !!data.summary,
                   summaryLength: data.summary?.length || 0,
+                  hasTimeline: !!data.timeline,
                 }, 'ChatDialog');
                 
-                const completedStatus: AgentStatus = {
+                setAgentStatus(prev => ({
+                  ...(prev || { phase: 'complete', message: '' }),
                   phase: 'complete',
-                  message: data.message,
+                  message: data.message || '任务完成',
                   summary: data.summary,
-                  todoList: agentStatus?.todoList,
-                };
-                
-                setAgentStatus(completedStatus);
+                  todoList: prev?.todoList,
+                  timeline: data.timeline || prev?.timeline,
+                }));
                 
                 logger.info('Agent execution completed, status will be collapsed', {
-                  hasTodoList: !!completedStatus.todoList,
-                  todoCount: completedStatus.todoList?.length || 0,
-                  hasSummary: !!completedStatus.summary,
+                  hasTodoList: !!agentStatus?.todoList,
+                  todoCount: agentStatus?.todoList?.length || 0,
+                  hasSummary: !!data.summary,
                 }, 'ChatDialog');
                 
-                // Add completion message
-                const completionMsg: Message = {
-                  id: `agent-complete-${Date.now()}`,
-                  role: 'assistant',
-                  content: `✓ Task completed!\n\n${data.summary}`,
-                  timestamp: new Date(),
-                };
-                setMessages(prev => [...prev, completionMsg]);
+                // Add completion message & update document for auto writer
+                if (isAutoWriterAgent) {
+                  if (updateDocumentContent && data.final_html) {
+                    updateDocumentContent(data.final_html);
+                  }
+                  const completionMsg: Message = {
+                    id: `agent-complete-${Date.now()}`,
+                    role: 'assistant',
+                    content: `✓ 文章已完成：《${data.title || 'AI文章'}》`,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, completionMsg]);
+                } else {
+                  const completionMsg: Message = {
+                    id: `agent-complete-${Date.now()}`,
+                    role: 'assistant',
+                    content: `✓ Task completed!\n\n${data.summary}`,
+                    timestamp: new Date(),
+                  };
+                  setMessages(prev => [...prev, completionMsg]);
+                }
               } else if (data.type === 'error') {
                 logger.error('[Agent Event] Agent error received', {
                   message: data.message,

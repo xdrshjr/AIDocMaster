@@ -25,7 +25,7 @@ export interface TodoItem {
 }
 
 export interface AgentStatus {
-  phase: 'planning' | 'executing' | 'summarizing' | 'complete' | 'error';
+  phase: 'planning' | 'executing' | 'summarizing' | 'complete' | 'error' | 'intent' | 'parameterizing' | 'outlining' | 'writing' | 'delivering';
   message: string;
   todoList?: TodoItem[];
   currentStep?: number;
@@ -33,6 +33,11 @@ export interface AgentStatus {
   stepDescription?: string;
   summary?: string;
   error?: string;
+  timeline?: Array<{
+    id: string;
+    label: string;
+    state: 'complete' | 'active' | 'upcoming';
+  }>;
 }
 
 interface AgentStatusPanelProps {
@@ -87,6 +92,15 @@ const AgentStatusPanel = ({ status, isActive, defaultCollapsed = false }: AgentS
 
   const getPhaseIcon = () => {
     switch (status.phase) {
+      case 'intent':
+        return <Brain className="w-5 h-5 text-blue-500 animate-pulse" />;
+      case 'parameterizing':
+      case 'outlining':
+        return <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />;
+      case 'writing':
+        return <Wrench className="w-5 h-5 text-orange-500 animate-spin" />;
+      case 'delivering':
+        return <CheckCircle2 className="w-5 h-5 text-emerald-500 animate-pulse" />;
       case 'planning':
         return <Brain className="w-5 h-5 text-blue-500 animate-pulse" />;
       case 'executing':
@@ -104,6 +118,16 @@ const AgentStatusPanel = ({ status, isActive, defaultCollapsed = false }: AgentS
 
   const getPhaseLabel = () => {
     switch (status.phase) {
+      case 'intent':
+        return 'Intent';
+      case 'parameterizing':
+        return 'Parameters';
+      case 'outlining':
+        return 'Outlining';
+      case 'writing':
+        return 'Writing';
+      case 'delivering':
+        return 'Delivering';
       case 'planning':
         return 'Planning';
       case 'executing':
@@ -166,6 +190,25 @@ const AgentStatusPanel = ({ status, isActive, defaultCollapsed = false }: AgentS
       {/* Collapsible content */}
       {!isCollapsed && (
         <div className="mt-3">
+          {status.timeline && status.timeline.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 mb-4" aria-label="Execution timeline">
+              {status.timeline.map((item, index) => {
+                const baseClasses = 'px-3 py-1 rounded-full text-xs font-semibold transition-colors border';
+                const stateClasses =
+                  item.state === 'complete'
+                    ? 'bg-green-500/10 text-green-600 border-green-500/30'
+                    : item.state === 'active'
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : 'bg-muted text-muted-foreground border-border';
+                return (
+                  <div key={item.id} className="flex items-center gap-2">
+                    <span className={`${baseClasses} ${stateClasses}`}>{item.label}</span>
+                    {index < status.timeline!.length - 1 && <span className="h-px w-6 bg-border hidden sm:block" />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {/* Current Step Description */}
           {status.stepDescription && (
             <div className="mb-3 p-3 bg-background/50 rounded border border-border">

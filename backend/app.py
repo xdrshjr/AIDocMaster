@@ -1133,6 +1133,80 @@ def agent_validation():
             'details': str(e)
         }), 500
 
+
+@app.route('/api/auto-writer-agent', methods=['POST'])
+def auto_writer_agent():
+    """
+    AI Document Auto-Writer endpoint.
+
+    Streams LangGraph agent status updates as SSE for the frontend auto writer.
+    """
+    start_time = datetime.now()
+    app.logger.info('[AutoWriter] Request received')
+
+    try:
+        data = request.get_json() or {}
+        user_prompt = data.get('prompt', '')
+        language = data.get('language', 'zh')
+        model_id = data.get('modelId')
+
+        if not user_prompt or not isinstance(user_prompt, str):
+            return jsonify({'error': 'prompt is required'}), 400
+
+        config = config_loader.get_llm_config(model_id=model_id)
+        if config is None:
+            return jsonify({'error': 'No LLM model configured'}), 500
+
+        validation = config_loader.validate_llm_config(config)
+        if not validation['valid']:
+            return jsonify({'error': validation.get('error', 'Invalid LLM config')}), 500
+
+        try:
+            from agent.auto_writer_agent import AutoWriterAgent
+        except ImportError as import_error:
+            app.logger.error('[AutoWriter] Failed to import agent', extra={
+                'error': str(import_error)
+            }, exc_info=True)
+            return jsonify({
+                'error': 'AutoWriterAgent not available',
+                'details': str(import_error)
+            }), 500
+
+        agent = AutoWriterAgent(
+            api_key=config['apiKey'],
+            api_url=config['apiUrl'],
+            model_name=config['modelName'],
+            language=language,
+        )
+
+        def generate():
+            chunk_count = 0
+            for event in agent.run(user_prompt):
+                chunk_count += 1
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            app.logger.info('[AutoWriter] Stream finished', extra={
+                'chunks': chunk_count,
+                'duration': f"{(datetime.now() - start_time).total_seconds():.2f}s"
+            })
+            yield "data: [DONE]\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            content_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
+            }
+        )
+
+    except Exception as e:
+        app.logger.error('[AutoWriter] Request failed', extra={'error': str(e)}, exc_info=True)
+        return jsonify({
+            'error': 'AutoWriter request failed',
+            'details': str(e)
+        }), 500
+
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
