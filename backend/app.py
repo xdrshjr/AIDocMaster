@@ -1134,6 +1134,280 @@ def agent_validation():
         }), 500
 
 
+# Agent list endpoint
+@app.route('/api/agents', methods=['GET'])
+def get_agents():
+    """
+    Get list of available agents with their capabilities
+    
+    Returns:
+        JSON array of agent descriptors
+    """
+    try:
+        from agent.agent_router import get_available_agents
+        
+        agents = get_available_agents()
+        
+        app.logger.info('[Agents] Agent list retrieved', extra={
+            'agent_count': len(agents),
+            'agent_types': [a['type'] for a in agents],
+        })
+        
+        return jsonify({
+            'agents': agents,
+            'count': len(agents),
+        })
+        
+    except ImportError as import_error:
+        app.logger.error('[Agents] Failed to import agent router', extra={
+            'error': str(import_error)
+        }, exc_info=True)
+        return jsonify({
+            'error': 'Agent router not available',
+            'details': str(import_error)
+        }), 500
+    except Exception as error:
+        app.logger.error('[Agents] Failed to get agent list', extra={
+            'error': str(error)
+        }, exc_info=True)
+        return jsonify({
+            'error': 'Failed to retrieve agent list',
+            'details': str(error)
+        }), 500
+
+
+# Agent routing endpoint (unified entry point for agent mode)
+@app.route('/api/agent-route', methods=['POST'])
+def agent_route():
+    """
+    Unified agent routing endpoint
+    
+    This endpoint:
+    1. Analyzes user request using LLM
+    2. Routes to appropriate agent (auto-writer or document-modifier)
+    3. Streams agent execution results
+    
+    POST body:
+        - request: User's command/request
+        - content: Document content (optional, for document modifier)
+        - language: Language for prompts ('en' or 'zh')
+        - modelId: Optional model ID to use
+    """
+    start_time = datetime.now()
+    app.logger.info('[AgentRouter] Request received')
+    
+    try:
+        data = request.get_json() or {}
+        user_request = data.get('request', '')
+        document_content = data.get('content', '')
+        language = data.get('language', 'zh')
+        model_id = data.get('modelId')
+        
+        if not user_request or not isinstance(user_request, str):
+            app.logger.warning('[AgentRouter] Invalid request', extra={
+                'request_type': type(user_request).__name__,
+            })
+            return jsonify({'error': 'request is required and must be a string'}), 400
+        
+        # Normalize language
+        if language not in ['en', 'zh']:
+            app.logger.warning(f'[AgentRouter] Unsupported language "{language}", defaulting to zh')
+            language = 'zh'
+        
+        has_document = bool(document_content and document_content.strip())
+        
+        app.logger.info('[AgentRouter] Processing routing request', extra={
+            'request_preview': user_request[:100] + '...' if len(user_request) > 100 else user_request,
+            'has_document': has_document,
+            'content_length': len(document_content) if has_document else 0,
+            'language': language,
+            'model_id': model_id or 'default',
+        })
+        
+        # Get and validate LLM configuration
+        config = config_loader.get_llm_config(model_id=model_id)
+        if config is None:
+            app.logger.error('[AgentRouter] No LLM model configured')
+            return jsonify({
+                'error': 'No LLM model configured',
+                'details': 'Please configure a model in Settings to use agent features.'
+            }), 500
+        
+        validation = config_loader.validate_llm_config(config)
+        if not validation['valid']:
+            app.logger.error('[AgentRouter] LLM configuration validation failed', extra={
+                'error': validation.get('error')
+            })
+            return jsonify({'error': validation.get('error', 'Invalid LLM config')}), 500
+        
+        # Import agent router
+        try:
+            from agent.agent_router import AgentRouter
+            from agent.auto_writer_agent import AutoWriterAgent
+            from agent.document_agent import DocumentAgent
+        except ImportError as import_error:
+            app.logger.error('[AgentRouter] Failed to import agent modules', extra={
+                'error': str(import_error)
+            }, exc_info=True)
+            return jsonify({
+                'error': 'Agent modules not available',
+                'details': str(import_error)
+            }), 500
+        
+        # Step 1: Route to appropriate agent
+        app.logger.info('[AgentRouter] Starting agent routing with LLM')
+        
+        router = AgentRouter(
+            api_key=config['apiKey'],
+            api_url=config['apiUrl'],
+            model_name=config['modelName'],
+            language=language,
+        )
+        
+        routing_result = router.route(user_request, has_document=has_document)
+        
+        app.logger.info('[AgentRouter] Routing completed', extra={
+            'selected_agent': routing_result['agent_type'],
+            'agent_name': routing_result['agent_name'],
+            'confidence': routing_result['confidence'],
+            'reasoning': routing_result['reasoning'][:100] + '...' if len(routing_result['reasoning']) > 100 else routing_result['reasoning'],
+        })
+        
+        # Step 2: Execute selected agent
+        selected_agent_type = routing_result['agent_type']
+        
+        def generate():
+            """Generator for streaming agent execution"""
+            chunk_count = 0
+            event_types = {}
+            
+            try:
+                # Send routing result first
+                routing_event = {
+                    'type': 'routing',
+                    'agent_type': routing_result['agent_type'],
+                    'agent_name': routing_result['agent_name'],
+                    'confidence': routing_result['confidence'],
+                    'reasoning': routing_result['reasoning'],
+                }
+                yield f"data: {json.dumps(routing_event, ensure_ascii=False)}\n\n"
+                chunk_count += 1
+                
+                app.logger.info('[AgentRouter] Sent routing result to client', extra={
+                    'agent_type': routing_result['agent_type'],
+                })
+                
+                # Execute the selected agent
+                if selected_agent_type == 'auto_writer':
+                    app.logger.info('[AgentRouter] Executing AutoWriterAgent')
+                    
+                    agent = AutoWriterAgent(
+                        api_key=config['apiKey'],
+                        api_url=config['apiUrl'],
+                        model_name=config['modelName'],
+                        language=language,
+                    )
+                    
+                    for event in agent.run(user_request):
+                        chunk_count += 1
+                        event_type = event.get('type', 'unknown')
+                        event_types[event_type] = event_types.get(event_type, 0) + 1
+                        
+                        # Log periodically
+                        if event_type == 'content_chunk' and chunk_count % 20 == 0:
+                            app.logger.debug('[AgentRouter AutoWriter] Streaming chunks', extra={
+                                'total_chunks': chunk_count,
+                                'content_chunks': event_types.get('content_chunk', 0),
+                            })
+                        
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                
+                elif selected_agent_type == 'document_modifier':
+                    app.logger.info('[AgentRouter] Executing DocumentAgent')
+                    
+                    if not has_document:
+                        error_event = {
+                            'type': 'error',
+                            'message': 'Document modifier requires a loaded document',
+                            'error': 'No document content provided'
+                        }
+                        yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                        return
+                    
+                    agent = DocumentAgent(
+                        api_key=config['apiKey'],
+                        api_url=config['apiUrl'],
+                        model_name=config['modelName'],
+                        language=language,
+                    )
+                    
+                    for event in agent.run(user_request, document_content):
+                        chunk_count += 1
+                        event_type = event.get('type', 'unknown')
+                        event_types[event_type] = event_types.get(event_type, 0) + 1
+                        
+                        # Log key events
+                        if event_type in ['status', 'todo_list', 'complete', 'error']:
+                            app.logger.info(f'[AgentRouter DocumentAgent] Event: {event_type}', extra={
+                                'phase': event.get('phase'),
+                                'event_message': event.get('message', '')[:100],
+                            })
+                        
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                
+                else:
+                    app.logger.error('[AgentRouter] Unknown agent type', extra={
+                        'agent_type': selected_agent_type,
+                    })
+                    error_event = {
+                        'type': 'error',
+                        'message': f'Unknown agent type: {selected_agent_type}',
+                    }
+                    yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                    return
+                
+                app.logger.info('[AgentRouter] Agent execution stream finished', extra={
+                    'agent_type': selected_agent_type,
+                    'total_chunks': chunk_count,
+                    'event_types': event_types,
+                    'duration': f"{(datetime.now() - start_time).total_seconds():.2f}s"
+                })
+                
+            except Exception as error:
+                app.logger.error('[AgentRouter] Agent execution failed', extra={
+                    'agent_type': selected_agent_type,
+                    'error': str(error),
+                    'chunks_before_error': chunk_count,
+                }, exc_info=True)
+                
+                error_event = {
+                    'type': 'error',
+                    'message': f'Agent execution failed: {str(error)}',
+                    'error': str(error),
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            
+            yield "data: [DONE]\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            content_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
+            }
+        )
+        
+    except Exception as error:
+        app.logger.error('[AgentRouter] Request failed', extra={
+            'error': str(error)
+        }, exc_info=True)
+        return jsonify({
+            'error': 'Agent routing failed',
+            'details': str(error)
+        }), 500
+
+
 @app.route('/api/auto-writer-agent', methods=['POST'])
 def auto_writer_agent():
     """

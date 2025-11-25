@@ -28,6 +28,12 @@ def get_planning_prompt(language: str = 'en') -> str:
 
 **规划原则：**
 - 每个TODO项应该是一个独立、明确的操作
+- **严格工具约束**：你只能使用以下三个工具，不能使用其他任何工具名称：
+  * get_document_content
+  * search_document_text
+  * modify_document_text
+  * ⚠️ 绝对不允许使用 "none"、"analyze"、"think" 等其他工具名称
+  * ⚠️ 如果需要分析或思考，请使用 get_document_content 获取内容后在下一步进行修改
 - **修改文本前必须先获取原文**：
   * 方法1：使用 get_document_content 查看完整文档内容
   * 方法2：使用 search_document_text 精确定位要修改的文本
@@ -45,8 +51,23 @@ def get_planning_prompt(language: str = 'en') -> str:
 
 示例2 - 修改特定文本：
 1. 使用 search_document_text 搜索关键词，获取上下文
-2. 根据搜索结果确定要替换的完整文本（包括HTML标签）
-3. 使用 modify_document_text 替换，original_text 使用搜索到的完整上下文
+2. 使用 modify_document_text 替换，original_text 使用搜索到的完整上下文
+
+❌ 错误示例 - 使用不存在的工具：
+{{
+  "id": "2",
+  "description": "分析文档内容",
+  "tool": "none",  // ❌ 错误！不存在的工具
+  "args": {{}}
+}}
+
+✅ 正确示例 - 使用已有工具：
+{{
+  "id": "1",
+  "description": "使用 get_document_content 获取并分析文档内容",
+  "tool": "get_document_content",  // ✅ 正确！使用已有工具
+  "args": {{}}
+}}
 
 **输出格式：**
 你需要输出一个JSON格式的TODO列表：
@@ -74,6 +95,11 @@ def get_planning_prompt(language: str = 'en') -> str:
 - 如果用户说"修改标题"，你必须先查看文档，找到实际的标题内容和格式
 - 不要直接猜测 original_text 的内容
 - HTML文档中的文本通常包含标签，必须包含完整的标签结构
+- ⚠️ **关键规则**：每个TODO项的 "tool" 字段必须是以下三个之一：
+  * "get_document_content"
+  * "search_document_text"
+  * "modify_document_text"
+- ⚠️ 禁止使用任何其他工具名称，包括但不限于："none"、"analyze"、"think"、"review" 等
 
 现在，请根据用户的命令制定执行计划。
 """
@@ -91,6 +117,12 @@ def get_planning_prompt(language: str = 'en') -> str:
 
 **Planning Principles:**
 - Each TODO item should be an independent, clear operation
+- **Strict Tool Constraint**: You can ONLY use the following three tools, no other tool names are allowed:
+  * get_document_content
+  * search_document_text
+  * modify_document_text
+  * ⚠️ Absolutely NO use of "none", "analyze", "think", or any other tool names
+  * ⚠️ If you need to analyze or think, use get_document_content to get the content then modify in the next step
 - **Always get original text before modifying**:
   * Method 1: Use get_document_content to view the complete document
   * Method 2: Use search_document_text to precisely locate the text to modify
@@ -108,8 +140,23 @@ Example 1 - Modify title:
 
 Example 2 - Modify specific text:
 1. Use search_document_text to search for keywords and get context
-2. Based on search results, determine the complete text to replace (including HTML tags)
-3. Use modify_document_text to replace, using the complete context found in search as original_text
+2. Use modify_document_text to replace, using the complete context found in search as original_text
+
+❌ Wrong Example - Using non-existent tool:
+{{
+  "id": "2",
+  "description": "Analyze document content",
+  "tool": "none",  // ❌ WRONG! Non-existent tool
+  "args": {{}}
+}}
+
+✅ Correct Example - Using existing tool:
+{{
+  "id": "1",
+  "description": "Use get_document_content to get and analyze document content",
+  "tool": "get_document_content",  // ✅ CORRECT! Using existing tool
+  "args": {{}}
+}}
 
 **Output Format:**
 You need to output a TODO list in JSON format:
@@ -137,6 +184,11 @@ You need to output a TODO list in JSON format:
 - If user says "modify title", you MUST first check the document to find the actual title content and format
 - Do NOT directly guess the content of original_text
 - Text in HTML documents usually contains tags, and you must include the complete tag structure
+- ⚠️ **Critical Rule**: The "tool" field in each TODO item MUST be one of these three:
+  * "get_document_content"
+  * "search_document_text"
+  * "modify_document_text"
+- ⚠️ DO NOT use any other tool names, including but not limited to: "none", "analyze", "think", "review", etc.
 
 Now, please create an execution plan based on the user's command.
 """

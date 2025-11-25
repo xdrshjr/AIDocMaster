@@ -8,10 +8,11 @@
 
 import { useState, useEffect, useRef, forwardRef } from 'react';
 import { flushSync } from 'react-dom';
-import { X, Loader2, Trash2, Trash, Bot } from 'lucide-react';
+import { X, Loader2, Trash2, Trash, Bot, List } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import AgentStatusPanel, { type AgentStatus, type TodoItem } from './AgentStatusPanel';
+import AgentListDialog from './AgentListDialog';
 import { logger } from '@/lib/logger';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
@@ -66,6 +67,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   const [isAgentMode, setIsAgentMode] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
+  const [isAgentListOpen, setIsAgentListOpen] = useState(false);
 
   // Track viewport height for responsive dialog sizing (modal only)
   useEffect(() => {
@@ -195,38 +197,43 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     }, 'ChatDialog');
 
     try {
-      const agentEndpoint = isAutoWriterAgent ? '/api/auto-writer' : '/api/agent-validation';
-      const apiUrl = await buildApiUrl(agentEndpoint);
-      logger.debug('Using agent validation API URL', { apiUrl }, 'ChatDialog');
+      // Use unified agent routing endpoint
+      const apiUrl = await buildApiUrl('/api/agent-route');
+      logger.debug('Using agent routing API URL', { apiUrl }, 'ChatDialog');
 
-      let documentContent = '';
-      if (!isAutoWriterAgent) {
-        documentContent = getDocumentContent ? getDocumentContent() : '';
-        if (!documentContent || documentContent.trim().length === 0) {
-          throw new Error('No document loaded. Please upload a document first.');
-        }
-        logger.debug('Got document content for agent', { contentLength: documentContent.length }, 'ChatDialog');
+      // Get document content if available (for potential document modifier agent)
+      const documentContent = getDocumentContent ? getDocumentContent() : '';
+      const hasDocument = Boolean(documentContent && documentContent.trim().length > 0);
+      
+      if (hasDocument) {
+        logger.debug('Document content available for agent routing', { 
+          contentLength: documentContent.length 
+        }, 'ChatDialog');
+      } else {
+        logger.debug('No document content available - routing may select auto-writer agent', 
+          undefined, 'ChatDialog');
       }
+
+      // Prepare request body for unified routing endpoint
+      const requestBody = {
+        request: command,
+        content: documentContent,
+        language: 'zh',
+        modelId: selectedModel?.id,
+      };
+
+      logger.info('Sending agent routing request', {
+        commandPreview: command.substring(0, 100),
+        hasDocument,
+        modelId: selectedModel?.id || 'default',
+      }, 'ChatDialog');
 
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(
-          isAutoWriterAgent
-            ? {
-                prompt: command,
-                language: 'zh',
-                modelId: selectedModel?.id,
-              }
-            : {
-                command,
-                content: documentContent,
-                language: 'en',
-                modelId: selectedModel?.id,
-              }
-        ),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -268,8 +275,35 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
               
               logger.debug('Agent event received', { type: data.type }, 'ChatDialog');
 
+              // Handle routing event (new unified routing endpoint)
+              if (data.type === 'routing') {
+                logger.info('[Agent Event] Routing decision received', {
+                  agent_type: data.agent_type,
+                  agent_name: data.agent_name,
+                  confidence: data.confidence,
+                  reasoning: data.reasoning?.substring(0, 100),
+                }, 'ChatDialog');
+                
+                // Display routing information to user
+                const routingMessage: Message = {
+                  id: `agent-routing-${Date.now()}`,
+                  role: 'assistant',
+                  content: `🤖 **Agent Selected**: ${data.agent_name}\n\n**Confidence**: ${data.confidence}\n\n**Reasoning**: ${data.reasoning}`,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => [...prev, routingMessage]);
+                
+                // Update agent status with routing info
+                setAgentStatus(prev => ({
+                  ...(prev || {}),
+                  phase: 'routing',
+                  message: `Routing to ${data.agent_name}...`,
+                  selectedAgent: data.agent_type,
+                  routingConfidence: data.confidence,
+                }));
+              }
               // Update agent status based on event type
-              if (data.type === 'status') {
+              else if (data.type === 'status') {
                 if (isAutoWriterAgent) {
                   setAgentStatus(prev => ({
                     ...(prev || { phase: 'intent', message: '' }),
@@ -1211,6 +1245,20 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           {isAgentMode && (
             <span className="text-xs text-primary font-medium">Enabled</span>
           )}
+          
+          {/* Agent List Button */}
+          <button
+            onClick={() => {
+              setIsAgentListOpen(true);
+              logger.info('Agent list dialog opened', undefined, 'ChatDialog');
+            }}
+            disabled={isLoading || isAgentRunning}
+            className="ml-2 p-1.5 rounded-md hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
+            aria-label="View available agents"
+            title="View available agents"
+          >
+            <List className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+          </button>
         </div>
         <p className="text-xs text-muted-foreground">
           {isAgentMode 
@@ -1237,6 +1285,15 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
         placeholder={isAgentMode 
           ? "Describe what you want to do with the document..." 
           : "Type your message..."}
+      />
+
+      {/* Agent List Dialog */}
+      <AgentListDialog 
+        isOpen={isAgentListOpen}
+        onClose={() => {
+          setIsAgentListOpen(false);
+          logger.info('Agent list dialog closed', undefined, 'ChatDialog');
+        }}
       />
     </div>
   );

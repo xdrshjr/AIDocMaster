@@ -392,10 +392,15 @@ class DocumentTools:
             elif tool_name == "get_document_content":
                 result = self.get_document_content()
             else:
-                logger.error('[TOOL] Unknown tool requested', extra={'tool_name': tool_name})
+                valid_tools = ["get_document_content", "search_document_text", "modify_document_text"]
+                logger.error('[TOOL] Unknown tool requested', extra={
+                    'tool_name': tool_name,
+                    'valid_tools': valid_tools,
+                })
                 result = {
                     "success": False,
-                    "message": f"Unknown tool: {tool_name}"
+                    "message": f"Unknown tool: {tool_name}. Only these tools are available: {', '.join(valid_tools)}. Please use one of the valid tools.",
+                    "error": f"Invalid tool name: {tool_name}"
                 }
             
             logger.info('[TOOL] Tool execution completed', extra={

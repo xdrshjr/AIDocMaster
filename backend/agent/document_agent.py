@@ -335,6 +335,31 @@ class DocumentAgent:
                     'todo_list': str(todo_list)[:500],
                 })
                 
+                # Validate tool names in the TODO list
+                valid_tools = {"get_document_content", "search_document_text", "modify_document_text"}
+                invalid_items = []
+                for idx, item in enumerate(todo_list):
+                    tool_name = item.get("tool", "")
+                    if tool_name not in valid_tools:
+                        invalid_items.append({
+                            'id': item.get('id', idx + 1),
+                            'tool': tool_name,
+                            'description': item.get('description', '')[:50]
+                        })
+                
+                if invalid_items:
+                    logger.error('[LLM] Invalid tool names detected in TODO list', extra={
+                        'invalid_items': invalid_items,
+                        'valid_tools': list(valid_tools),
+                    })
+                    error_msg = f"Invalid tool names detected: {', '.join([item['tool'] for item in invalid_items])}. Only these tools are allowed: {', '.join(valid_tools)}"
+                    yield {
+                        "type": "error",
+                        "message": error_msg,
+                        "invalid_items": invalid_items
+                    }
+                    return None
+                
                 return todo_list
                 
             except json.JSONDecodeError as e:
