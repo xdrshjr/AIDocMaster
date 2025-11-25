@@ -1181,12 +1181,34 @@ def auto_writer_agent():
 
         def generate():
             chunk_count = 0
+            event_types = {}
+            
             for event in agent.run(user_prompt):
                 chunk_count += 1
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                event_type = event.get('type', 'unknown')
+                event_types[event_type] = event_types.get(event_type, 0) + 1
+                
+                # Log streaming events periodically
+                if event_type == 'content_chunk':
+                    if chunk_count % 20 == 0:  # Log every 20 chunks to avoid spam
+                        app.logger.debug('[AutoWriter SSE] Streaming content chunks', extra={
+                            'total_chunks': chunk_count,
+                            'content_chunks': event_types.get('content_chunk', 0),
+                            'draft_updates': event_types.get('article_draft', 0),
+                        })
+                elif event_type == 'article_draft':
+                    app.logger.info('[AutoWriter SSE] Sending draft update', extra={
+                        'chunk_count': chunk_count,
+                        'html_length': len(event.get('html', '')),
+                    })
+                
+                # Yield SSE event
+                sse_data = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield sse_data
 
             app.logger.info('[AutoWriter] Stream finished', extra={
-                'chunks': chunk_count,
+                'total_chunks': chunk_count,
+                'event_types': event_types,
                 'duration': f"{(datetime.now() - start_time).total_seconds():.2f}s"
             })
             yield "data: [DONE]\n\n"

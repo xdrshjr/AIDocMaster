@@ -26,3 +26,4 @@ const Footer = ({ copyright }: FooterProps) => {
 
 export default Footer;
 
+

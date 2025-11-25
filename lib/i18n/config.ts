@@ -18,3 +18,4 @@ export const i18nConfig = {
   localeNames,
 };
 
+

@@ -433,9 +433,34 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     timeline: prev?.timeline,
                   };
                 });
+              } else if (data.type === 'content_chunk' && isAutoWriterAgent) {
+                // Real-time streaming chunk from section generation
+                logger.debug('[Agent Event] Content chunk received', {
+                  section_index: data.section_index,
+                  section_title: data.section_title,
+                  chunk_length: data.chunk?.length || 0,
+                  accumulated_length: data.accumulated_length,
+                  current_section: data.current_section,
+                  total_sections: data.total_sections,
+                }, 'ChatDialog');
+                
+                // Note: article_draft events will provide the full HTML with chunks included
+                // We rely on article_draft for actual document updates
               } else if (data.type === 'article_draft' && isAutoWriterAgent) {
                 if (updateDocumentContent && data.html) {
+                  const startTime = Date.now();
                   updateDocumentContent(data.html);
+                  const duration = Date.now() - startTime;
+                  
+                  logger.info('[Agent Event] Document updated with streaming content', {
+                    html_length: data.html.length,
+                    update_duration_ms: duration,
+                  }, 'ChatDialog');
+                } else {
+                  logger.warn('[Agent Event] Cannot update document - missing handler or HTML', {
+                    hasHandler: !!updateDocumentContent,
+                    hasHtml: !!data.html,
+                  }, 'ChatDialog');
                 }
               } else if (data.type === 'complete') {
                 logger.success('[Agent Event] Agent workflow completed', {

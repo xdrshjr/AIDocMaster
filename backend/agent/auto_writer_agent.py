@@ -128,6 +128,10 @@ def build_outline(state: WriterState) -> WriterState:
 
 
 def write_section(state: WriterState) -> WriterState:
+    """
+    Write a single section - NOTE: This is now only used as a fallback.
+    The main run() method handles streaming section generation directly.
+    """
     outline = state["outline"]
     completed_count = len(state.get("completed_sections", []))
     if completed_count >= len(outline):
@@ -217,34 +221,44 @@ def compile_article(state: WriterState) -> WriterState:
     return state
 
 
-def build_html_from_sections(sections: List[Dict[str, str]]) -> str:
+def build_html_from_sections(sections: List[Dict[str, str]], article_title: str = None) -> str:
+    """
+    Build HTML from article sections.
+    
+    Args:
+        sections: List of section dictionaries with 'title' and 'content'
+        article_title: Optional main article title to display at the top
+    
+    Returns:
+        Complete HTML string with optional article title and all sections
+    """
     html_parts = []
+    
+    # Add main article title if provided
+    if article_title:
+        html_parts.append(f"<h1>{article_title}</h1>")
+    
+    # Add each section with h2 title and paragraphs
     for section in sections:
         html_parts.append(f"<h2>{section['title']}</h2>")
         for paragraph in section["content"].split("\n"):
             clean = paragraph.strip()
             if clean:
                 html_parts.append(f"<p>{clean}</p>")
+    
     return "".join(html_parts)
 
 
 def create_writer_workflow() -> StateGraph:
+    """
+    Create simplified workflow for outline generation only.
+    Section writing is now handled manually with streaming in the run() method.
+    """
     workflow = StateGraph(WriterState)
     workflow.add_node("outline", build_outline)
-    workflow.add_node("write_section", write_section)
-    workflow.add_node("compile", compile_article)
 
     workflow.set_entry_point("outline")
-    workflow.add_edge("outline", "write_section")
-    workflow.add_conditional_edges(
-        "write_section",
-        should_continue_writing,
-        {
-            "continue": "write_section",
-            "done": "compile",
-        },
-    )
-    workflow.add_edge("compile", END)
+    workflow.add_edge("outline", END)
 
     return workflow.compile()
 
@@ -264,8 +278,113 @@ class AutoWriterAgent:
             "timeline": timeline,
         }
 
+    def _stream_section_content(
+        self,
+        section: Dict[str, str],
+        section_index: int,
+        total_sections: int,
+        params: WriterParameters,
+        previous_sections: List[Dict[str, str]]
+    ) -> Generator[Dict, None, str]:
+        """
+        Stream section content generation with real-time chunk events.
+        Yields content_chunk events as the LLM generates text.
+        Returns the complete section content.
+        """
+        logger.info("[AutoWriter] Starting streaming section generation", extra={
+            "section_index": section_index + 1,
+            "total_sections": total_sections,
+            "section_title": section["title"],
+        })
+
+        # Create streaming LLM instance
+        streaming_llm = self.config.get_llm(temperature=params["temperature"], streaming=True)
+
+        # Build context from previous sections
+        previous_snippets = "\n".join(
+            f"{idx + 1}. {item['title']}: {item['content'][:120]}"
+            for idx, item in enumerate(previous_sections)
+        )
+
+        # Create prompt for section
+        prompt = SystemMessage(
+            content=(
+                f"你是一名专业写作者，语言为{params['language']}。\n"
+                f"主题：{params['topic']}\n"
+                f"目标读者：{params['audience']}\n"
+                f"语调：{params['tone']}\n"
+                f"必备关键词：{', '.join(params['keywords']) or '无'}\n"
+                f"之前段落内容（供参考）：\n{previous_snippets or '无'}\n"
+                f"请写作段落《{section['title']}》，要求紧扣概述：{section['summary']}，字数 250-400 字。\n"
+                "内容需要结构清晰，使用自然段，语言流畅。"
+            )
+        )
+
+        # Stream the content
+        accumulated_content = ""
+        chunk_count = 0
+
+        logger.debug("[AutoWriter] Starting LLM streaming for section", extra={
+            "section_index": section_index + 1,
+            "section_title": section["title"],
+        })
+
+        try:
+            for chunk in streaming_llm.stream([prompt]):
+                chunk_content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                
+                if chunk_content:
+                    accumulated_content += chunk_content
+                    chunk_count += 1
+
+                    # Yield content chunk event for real-time display
+                    yield {
+                        "type": "content_chunk",
+                        "section_index": section_index,
+                        "section_title": section["title"],
+                        "chunk": chunk_content,
+                        "accumulated_length": len(accumulated_content),
+                        "current_section": section_index + 1,
+                        "total_sections": total_sections,
+                    }
+
+                    # Log progress periodically
+                    if chunk_count % 10 == 0:
+                        logger.debug("[AutoWriter] Streaming progress", extra={
+                            "section_index": section_index + 1,
+                            "chunks_received": chunk_count,
+                            "content_length": len(accumulated_content),
+                        })
+
+            logger.info("[AutoWriter] Section streaming completed", extra={
+                "section_index": section_index + 1,
+                "section_title": section["title"],
+                "total_chunks": chunk_count,
+                "final_content_length": len(accumulated_content),
+            })
+
+            return accumulated_content.strip()
+
+        except Exception as error:
+            logger.error("[AutoWriter] Section streaming failed", extra={
+                "section_index": section_index + 1,
+                "section_title": section["title"],
+                "error": str(error),
+                "chunks_before_error": chunk_count,
+            }, exc_info=True)
+            
+            # Return partial content if any was generated
+            if accumulated_content:
+                logger.info("[AutoWriter] Returning partial section content after error", extra={
+                    "section_index": section_index + 1,
+                    "partial_length": len(accumulated_content),
+                })
+                return accumulated_content.strip()
+            
+            raise
+
     def run(self, user_prompt: str) -> Generator[Dict, None, None]:
-        logger.info("[AutoWriter] Agent run started", extra={
+        logger.info("[AutoWriter] Agent run started with streaming support", extra={
             "prompt_preview": user_prompt[:120],
         })
 
@@ -278,10 +397,14 @@ class AutoWriterAgent:
                 {"id": "deliver", "label": "结果输出", "state": "upcoming"},
             ]
 
+            # Phase 1: Intent Analysis
             yield self._status_event("intent", "正在分析任务意图...", timeline)
             intent: IntentResult = analyze_intent(self.intent_llm, user_prompt)
 
             if not intent["should_write"]:
+                logger.info("[AutoWriter] Intent check failed - no writing needed", extra={
+                    "reason": intent["reason"],
+                })
                 yield {
                     "type": "error",
                     "message": "当前指令不需要生成文档",
@@ -289,16 +412,24 @@ class AutoWriterAgent:
                 }
                 return
 
+            # Phase 2: Parameter Extraction
             timeline[0]["state"] = "complete"
             timeline[1]["state"] = "active"
             yield self._status_event("parameterizing", "提取写作关键参数...", timeline)
 
             parameters: WriterParameters = extract_writer_parameters(self.intent_llm, user_prompt)
+            logger.info("[AutoWriter] Parameters extracted", extra={
+                "title": parameters["title"],
+                "paragraph_count": parameters["paragraph_count"],
+                "tone": parameters["tone"],
+            })
+            
             yield {
                 "type": "parameters",
                 "parameters": parameters,
             }
 
+            # Phase 3: Outline Generation
             timeline[1]["state"] = "complete"
             timeline[2]["state"] = "active"
             yield self._status_event("outlining", "构建文档结构...", timeline)
@@ -311,169 +442,170 @@ class AutoWriterAgent:
                 "llm_config": self.config,
             }
 
-            # Stream graph execution for fine-grained progress
-            section_index = 0
-            drafted_sections: List[Dict[str, str]] = []
-            final_state = None
-            compile_handled = False
+            # Run outline generation workflow
+            logger.debug("[AutoWriter] Starting outline generation workflow")
+            outline_state = self.workflow.invoke(initial_state)
+            outline = outline_state.get("outline", [])
             
-            for event in self.workflow.stream(
-                initial_state,
-                stream_mode="values",
-            ):
-                logger.debug("[AutoWriter] Workflow event received", extra={
-                    "event_keys": list(event.keys()),
-                })
-                for node_name, state_update in event.items():
-                    # state_update might be a dict or other type, check safely
-                    is_dict = isinstance(state_update, dict)
-                    logger.debug("[AutoWriter] Processing node", extra={
-                        "node_name": node_name,
-                        "is_dict": is_dict,
-                        "has_final_markdown": is_dict and "final_article_markdown" in state_update,
-                        "has_final_html": is_dict and "final_article_html" in state_update,
-                    })
-                    if node_name == "outline":
-                        timeline[2]["state"] = "complete"
-                        timeline[3]["state"] = "active"
-                        yield self._status_event(
-                            "writing",
-                            "文档结构已设计完成，开始生成内容...",
-                            timeline,
-                        )
-                    elif node_name == "write_section" and is_dict and "completed_sections" in state_update:
-                        # Update timeline when first section starts
-                        if timeline[2]["state"] != "complete":
-                            timeline[2]["state"] = "complete"
-                        if timeline[3]["state"] != "active":
-                            timeline[3]["state"] = "active"
+            if not outline:
+                logger.error("[AutoWriter] No outline generated")
+                raise ValueError("Failed to generate document outline")
 
-                        section_index += 1
-                        section = state_update["completed_sections"][-1]
-                        drafted_sections.append(section)
+            logger.info("[AutoWriter] Outline generated successfully", extra={
+                "section_count": len(outline),
+                "sections": [s["title"] for s in outline],
+            })
+
+            timeline[2]["state"] = "complete"
+            timeline[3]["state"] = "active"
+            yield self._status_event(
+                "writing",
+                f"文档结构已设计完成，开始生成 {len(outline)} 个段落...",
+                timeline,
+            )
+
+            # Phase 4: Stream Section Writing
+            drafted_sections: List[Dict[str, str]] = []
+            total_sections = len(outline)
+
+            logger.info("[AutoWriter] Starting streaming section generation", extra={
+                "total_sections": total_sections,
+            })
+
+            for section_index, section in enumerate(outline):
+                logger.info("[AutoWriter] Starting section", extra={
+                    "section_index": section_index + 1,
+                    "total_sections": total_sections,
+                    "section_title": section["title"],
+                })
+
+                # Yield section start status
+                yield self._status_event(
+                    "writing",
+                    f"正在生成段落 {section_index + 1}/{total_sections}：{section['title']}",
+                    timeline,
+                )
+
+                # Stream section content with real-time chunks
+                section_content = ""
+                chunk_counter = 0
+                last_update_length = 0
+                
+                for event in self._stream_section_content(
+                    section,
+                    section_index,
+                    total_sections,
+                    parameters,
+                    drafted_sections
+                ):
+                    if event["type"] == "content_chunk":
+                        # Forward chunk event to frontend
+                        yield event
+                        # Accumulate for building draft HTML
+                        section_content += event["chunk"]
+                        chunk_counter += 1
+
+                        # Send draft HTML update every 2 chunks OR every 50 characters for smooth real-time display
+                        # This ensures frequent updates for better streaming experience
+                        chars_since_update = len(section_content) - last_update_length
                         
-                        if section_index == 1:
-                            yield self._status_event(
-                                "writing",
-                                "开始生成正文内容...",
-                                timeline,
-                            )
-                        
-                        # Check if this is the last section
-                        is_last_section = section_index >= parameters["paragraph_count"]
-                        
-                        yield self._status_event(
-                            "writing",
-                            f"正在完成段落 {section_index}/{parameters['paragraph_count']}",
-                            timeline,
-                        )
-                        yield {
-                            "type": "section_progress",
-                            "current": section_index,
-                            "total": parameters["paragraph_count"],
-                            "title": section["title"],
-                            "content": section["content"],
-                        }
-                        yield {
-                            "type": "article_draft",
-                            "html": build_html_from_sections(drafted_sections),
-                        }
-                        
-                        # If last section, mark writing as complete and prepare for compile
-                        if is_last_section:
-                            timeline[3]["state"] = "complete"
-                            timeline[4]["state"] = "active"
-                            logger.info("[AutoWriter] All sections completed, preparing final article", extra={
-                                "total_sections": section_index,
-                                "timeline_state": timeline[3]["state"],
+                        if chunk_counter % 2 == 0 or chars_since_update >= 50:
+                            # Build current draft with partial section
+                            current_draft = drafted_sections + [{
+                                "title": section["title"],
+                                "content": section_content,
+                            }]
+                            draft_html = build_html_from_sections(current_draft, article_title=parameters["title"])
+                            
+                            logger.debug("[AutoWriter] Sending incremental draft update", extra={
+                                "section_index": section_index + 1,
+                                "chunk_counter": chunk_counter,
+                                "current_content_length": len(section_content),
+                                "chars_since_last_update": chars_since_update,
+                                "html_length": len(draft_html),
                             })
                             
-                            # Generate final article immediately
-                            final_html = build_html_from_sections(drafted_sections)
-                            final_markdown_parts = []
-                            for section in drafted_sections:
-                                final_markdown_parts.append(f"## {section['title']}\n\n{section['content']}\n")
-                            final_markdown = "\n".join(final_markdown_parts).strip()
-                            
-                            yield self._status_event("delivering", "文稿已完成，正在推送...", timeline)
-                            timeline[4]["state"] = "complete"
                             yield {
-                                "type": "complete",
-                                "summary": "AI Auto-Writer 任务完成。",
-                                "final_markdown": final_markdown,
-                                "final_html": final_html,
-                                "title": parameters["title"],
-                                "timeline": timeline,
+                                "type": "article_draft",
+                                "html": draft_html,
                             }
-                            compile_handled = True
-                    elif node_name == "compile" and is_dict:
-                        compile_handled = True
-                        final_markdown = state_update.get("final_article_markdown", "")
-                        final_html = state_update.get("final_article_html", "")
-                        # Ensure writing phase is marked complete
-                        if timeline[3]["state"] != "complete":
-                            timeline[3]["state"] = "complete"
-                        timeline[4]["state"] = "active"
+                            
+                            last_update_length = len(section_content)
+                    else:
+                        # This shouldn't happen, but handle gracefully
+                        section_content = event
+                        break
 
-                        logger.info("[AutoWriter] Compile node reached, sending final status", extra={
-                            "final_markdown_length": len(final_markdown),
-                            "final_html_length": len(final_html),
-                            "timeline_states": [t["state"] for t in timeline],
-                        })
+                # If section_content is empty (generator returned directly), use the return value
+                if not section_content and isinstance(event, str):
+                    section_content = event
 
-                        yield self._status_event("delivering", "文稿已完成，正在推送...", timeline)
-                        
-                        # Mark deliver as complete in timeline
-                        timeline[4]["state"] = "complete"
-                        yield {
-                            "type": "complete",
-                            "summary": "AI Auto-Writer 任务完成。",
-                            "final_markdown": final_markdown,
-                            "final_html": final_html,
-                            "title": parameters["title"],
-                            "timeline": timeline,
-                        }
-                        final_state = state_update
+                # Add completed section
+                completed_section = {
+                    "title": section["title"],
+                    "content": section_content,
+                }
+                drafted_sections.append(completed_section)
 
-            # If compile node wasn't captured in stream, check final state
-            if not compile_handled:
-                logger.warning("[AutoWriter] Compile node not captured in stream, checking final state")
-                # Invoke workflow to get final state
-                try:
-                    final_state = self.workflow.invoke(initial_state)
-                    if "final_article_markdown" in final_state or "final_article_html" in final_state:
-                        final_markdown = final_state.get("final_article_markdown", "")
-                        final_html = final_state.get("final_article_html", "")
-                        
-                        # Ensure all phases are complete
-                        if timeline[3]["state"] != "complete":
-                            timeline[3]["state"] = "complete"
-                        timeline[4]["state"] = "complete"
-                        
-                        logger.info("[AutoWriter] Sending complete event from final state", extra={
-                            "final_markdown_length": len(final_markdown),
-                            "final_html_length": len(final_html),
-                        })
-                        
-                        yield self._status_event("delivering", "文稿已完成，正在推送...", timeline)
-                        yield {
-                            "type": "complete",
-                            "summary": "AI Auto-Writer 任务完成。",
-                            "final_markdown": final_markdown,
-                            "final_html": final_html,
-                            "title": parameters["title"],
-                            "timeline": timeline,
-                        }
-                except Exception as e:
-                    logger.error("[AutoWriter] Failed to get final state", extra={
-                        "error": str(e),
-                    }, exc_info=True)
+                logger.info("[AutoWriter] Section completed", extra={
+                    "section_index": section_index + 1,
+                    "section_title": section["title"],
+                    "content_length": len(section_content),
+                })
 
-            logger.info("[AutoWriter] Agent workflow finished")
+                # Yield section completion progress
+                yield {
+                    "type": "section_progress",
+                    "current": section_index + 1,
+                    "total": total_sections,
+                    "title": section["title"],
+                    "content": section_content,
+                }
+
+                # Send full draft HTML after each section completes
+                yield {
+                    "type": "article_draft",
+                    "html": build_html_from_sections(drafted_sections, article_title=parameters["title"]),
+                }
+
+            # Phase 5: Deliver Final Article
+            timeline[3]["state"] = "complete"
+            timeline[4]["state"] = "active"
+            yield self._status_event("delivering", "所有段落完成，正在整理最终文稿...", timeline)
+
+            # Build final output with article title
+            final_html = build_html_from_sections(drafted_sections, article_title=parameters["title"])
+            
+            # Build markdown with title
+            final_markdown_parts = [f"# {parameters['title']}\n"]
+            for section in drafted_sections:
+                final_markdown_parts.append(f"## {section['title']}\n\n{section['content']}\n")
+            final_markdown = "\n".join(final_markdown_parts).strip()
+
+            logger.info("[AutoWriter] Final article assembled", extra={
+                "total_sections": len(drafted_sections),
+                "markdown_length": len(final_markdown),
+                "html_length": len(final_html),
+            })
+
+            timeline[4]["state"] = "complete"
+            yield {
+                "type": "complete",
+                "summary": "AI Auto-Writer 任务完成。",
+                "final_markdown": final_markdown,
+                "final_html": final_html,
+                "title": parameters["title"],
+                "timeline": timeline,
+            }
+
+            logger.info("[AutoWriter] Agent run completed successfully", extra={
+                "total_sections": len(drafted_sections),
+            })
 
         except Exception as error:
-            logger.error("[AutoWriter] Agent failed", extra={
+            logger.error("[AutoWriter] Agent run failed", extra={
                 "error": str(error),
+                "error_type": type(error).__name__,
             }, exc_info=True)
             yield {
                 "type": "error",

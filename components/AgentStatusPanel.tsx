@@ -193,12 +193,12 @@ const AgentStatusPanel = ({ status, isActive, defaultCollapsed = false }: AgentS
           {status.timeline && status.timeline.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 mb-4" aria-label="Execution timeline">
               {status.timeline.map((item, index) => {
-                const baseClasses = 'px-3 py-1 rounded-full text-xs font-semibold transition-colors border';
+                const baseClasses = 'px-3 py-1 text-xs font-semibold transition-colors border-2';
                 const stateClasses =
                   item.state === 'complete'
-                    ? 'bg-green-500/10 text-green-600 border-green-500/30'
+                    ? 'bg-green-500/10 text-green-600 border-green-500/50'
                     : item.state === 'active'
-                    ? 'bg-primary/10 text-primary border-primary/30'
+                    ? 'bg-primary/10 text-primary border-primary/50'
                     : 'bg-muted text-muted-foreground border-border';
                 return (
                   <div key={item.id} className="flex items-center gap-2">

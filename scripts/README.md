@@ -178,3 +178,4 @@ main();
 - [Electron Documentation](https://www.electronjs.org/docs) - Official Electron docs
 - [Electron Builder](https://www.electron.build/) - Packaging tool docs
 
+

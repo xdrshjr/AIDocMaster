@@ -173,3 +173,4 @@ November 13, 2025
 - `components/ChatDialog.tsx` - Floating chat dialog (no changes needed)
 - `components/AIDocValidationContainer.tsx` - Validation container (no changes needed)
 
+
