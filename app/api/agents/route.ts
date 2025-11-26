@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
         signal: controller.signal,
       });
     } catch (fetchError) {
+      clearTimeout(timeout);
       logger.error('Agents List API: Failed to connect to Flask backend', {
         error: fetchError instanceof Error ? fetchError.message : 'Unknown error',
         flaskUrl,

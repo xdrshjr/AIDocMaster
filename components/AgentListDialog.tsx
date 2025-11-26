@@ -189,7 +189,7 @@ const AgentListDialog = ({ isOpen, onClose }: AgentListDialogProps) => {
                       {agent.typical_requests.map((request, reqIndex) => (
                         <span
                           key={reqIndex}
-                          className="inline-block px-3 py-1.5 bg-muted text-muted-foreground text-xs rounded-full border border-border hover:border-primary/50 transition-colors"
+                          className="inline-block px-3 py-1.5 bg-muted text-muted-foreground text-xs rounded-md border border-border hover:border-primary/50 transition-colors"
                         >
                           &quot;{request}&quot;
                         </span>
