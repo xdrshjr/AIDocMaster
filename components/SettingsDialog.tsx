@@ -131,11 +131,18 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
           name: result.model.name,
         }, 'SettingsDialog');
 
+        // Update state immediately with the newly added model
+        const updatedModels = [...models, result.model];
+        setModels(updatedModels);
+        setStagedModels(JSON.parse(JSON.stringify(updatedModels))); // Deep copy
+        
+        logger.debug('Model list updated in UI', {
+          modelId: result.model.id,
+          totalModels: updatedModels.length,
+        }, 'SettingsDialog');
+
         setSuccess('Model added successfully!');
         handleResetForm();
-        
-        // Reload models to get the newly added model
-        await handleLoadModels();
       } else {
         throw new Error(result.error || 'Failed to add model');
       }
@@ -173,11 +180,29 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
           name: formName,
         }, 'SettingsDialog');
 
+        // Update state immediately with the modified model
+        const updatedModels = models.map(model => 
+          model.id === editingModelId
+            ? {
+                ...model,
+                name: formName.trim(),
+                apiUrl: formApiUrl.trim(),
+                apiKey: formApiKey.trim(),
+                modelName: formModelName.trim(),
+                updatedAt: new Date().toISOString(),
+              }
+            : model
+        );
+        setModels(updatedModels);
+        setStagedModels(JSON.parse(JSON.stringify(updatedModels))); // Deep copy
+        
+        logger.debug('Model list updated in UI after edit', {
+          modelId: editingModelId,
+          totalModels: updatedModels.length,
+        }, 'SettingsDialog');
+
         setSuccess('Model updated successfully!');
         handleResetForm();
-        
-        // Reload models to reflect the update
-        await handleLoadModels();
       } else {
         throw new Error(result.error || 'Failed to update model');
       }
@@ -283,10 +308,18 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
       if (result.success) {
         logger.success('Model deleted successfully', { id, name }, 'SettingsDialog');
-        setSuccess('Model deleted successfully!');
         
-        // Reload models to reflect deletion
-        await handleLoadModels();
+        // Update state immediately by filtering out the deleted model
+        const updatedModels = models.filter(model => model.id !== id);
+        setModels(updatedModels);
+        setStagedModels(JSON.parse(JSON.stringify(updatedModels))); // Deep copy
+        
+        logger.debug('Model list updated in UI after deletion', {
+          deletedModelId: id,
+          remainingModels: updatedModels.length,
+        }, 'SettingsDialog');
+        
+        setSuccess('Model deleted successfully!');
       } else {
         throw new Error(result.error || 'Failed to delete model');
       }
@@ -310,10 +343,23 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
       if (result.success) {
         logger.success('Default model set successfully', { id, name }, 'SettingsDialog');
+        
+        // Update state immediately - set selected model as default and clear others
+        const updatedModels = models.map(model => ({
+          ...model,
+          isDefault: model.id === id,
+        }));
+        setModels(updatedModels);
+        setStagedModels(JSON.parse(JSON.stringify(updatedModels))); // Deep copy
+        
+        logger.debug('Model list updated in UI after setting default', {
+          defaultModelId: id,
+          totalModels: updatedModels.length,
+        }, 'SettingsDialog');
+        
         setSuccess(`"${name}" set as default model!`);
         
-        // Reload models and sync to cookies
-        await handleLoadModels();
+        // Sync to cookies for persistence
         await syncModelConfigsToCookies();
       } else {
         throw new Error(result.error || 'Failed to set default model');

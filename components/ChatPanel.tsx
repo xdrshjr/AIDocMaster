@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { Loader2, Trash2, Bot, Trash } from 'lucide-react';
 import ChatMessage from './ChatMessage';
@@ -18,7 +18,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
-import { loadModelConfigs, getDefaultModel, type ModelConfig } from '@/lib/modelConfig';
+import { loadModelConfigs, getDefaultModel, getModelConfigsUpdatedEventName, type ModelConfig } from '@/lib/modelConfig';
 import type { MCPConfig } from '@/lib/mcpConfig';
 
 export interface Message extends ChatMessageType {
@@ -53,6 +53,50 @@ const ChatPanel = ({
   const [enabledMCPTools, setEnabledMCPTools] = useState<MCPConfig[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const loadModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    logger.info('Loading available models for selection', undefined, 'ChatPanel');
+    
+    try {
+      const configList = await loadModelConfigs();
+      const enabledModels = configList.models.filter(m => m.isEnabled !== false);
+      
+      logger.info('Models loaded for selector', {
+        totalModels: configList.models.length,
+        enabledModels: enabledModels.length,
+      }, 'ChatPanel');
+      
+      setAvailableModels(enabledModels);
+      
+      // Set default model as selected
+      const defaultModel = await getDefaultModel();
+      if (defaultModel) {
+        setSelectedModel(defaultModel);
+        logger.info('Default model selected', {
+          modelId: defaultModel.id,
+          modelName: defaultModel.name,
+        }, 'ChatPanel');
+      } else if (enabledModels.length > 0) {
+        setSelectedModel(enabledModels[0]);
+        logger.info('No default model, selected first enabled model', {
+          modelId: enabledModels[0].id,
+          modelName: enabledModels[0].name,
+        }, 'ChatPanel');
+      } else {
+        setSelectedModel(null);
+        logger.warn('No enabled models available', undefined, 'ChatPanel');
+      }
+    } catch (error) {
+      logger.error('Failed to load models for selector', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }, 'ChatPanel');
+      setAvailableModels([]);
+      setSelectedModel(null);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, []);
+
   useEffect(() => {
     logger.component('ChatPanel', 'mounted', { 
       conversationId,
@@ -62,49 +106,33 @@ const ChatPanel = ({
 
   // Load available models on mount
   useEffect(() => {
-    const loadModels = async () => {
-      setIsLoadingModels(true);
-      logger.info('Loading available models for selection', undefined, 'ChatPanel');
-      
-      try {
-        const configList = await loadModelConfigs();
-        const enabledModels = configList.models.filter(m => m.isEnabled !== false);
-        
-        logger.info('Models loaded for selector', {
-          totalModels: configList.models.length,
-          enabledModels: enabledModels.length,
-        }, 'ChatPanel');
-        
-        setAvailableModels(enabledModels);
-        
-        // Set default model as selected
-        const defaultModel = await getDefaultModel();
-        if (defaultModel) {
-          setSelectedModel(defaultModel);
-          logger.info('Default model selected', {
-            modelId: defaultModel.id,
-            modelName: defaultModel.name,
-          }, 'ChatPanel');
-        } else if (enabledModels.length > 0) {
-          setSelectedModel(enabledModels[0]);
-          logger.info('No default model, selected first enabled model', {
-            modelId: enabledModels[0].id,
-            modelName: enabledModels[0].name,
-          }, 'ChatPanel');
-        } else {
-          logger.warn('No enabled models available', undefined, 'ChatPanel');
-        }
-      } catch (error) {
-        logger.error('Failed to load models for selector', {
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }, 'ChatPanel');
-      } finally {
-        setIsLoadingModels(false);
-      }
-    };
-    
     loadModels();
-  }, []);
+  }, [loadModels]);
+
+  // Listen for model configuration update events (from Settings) and refresh models
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const eventName = getModelConfigsUpdatedEventName();
+
+    const handleModelsUpdated = (event: Event) => {
+      logger.info('[ModelSelection] Model configurations updated event received, reloading models', {
+        eventType: event.type,
+        eventName,
+      }, 'ChatPanel');
+      loadModels();
+    };
+
+    window.addEventListener(eventName, handleModelsUpdated);
+    logger.debug('[ModelSelection] Subscribed to model configuration updated events', { eventName }, 'ChatPanel');
+
+    return () => {
+      window.removeEventListener(eventName, handleModelsUpdated);
+      logger.debug('[ModelSelection] Unsubscribed from model configuration updated events', { eventName }, 'ChatPanel');
+    };
+  }, [loadModels]);
 
   // Get messages for current conversation
   const messages = conversationId ? (messagesMap.get(conversationId) || []) : [];

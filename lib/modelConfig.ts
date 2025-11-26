@@ -25,7 +25,43 @@ export interface ModelConfigList {
 }
 
 const MODEL_CONFIG_KEY = 'docaimaster_model_configs';
+const MODEL_CONFIGS_UPDATED_EVENT = 'docaimaster_model_configs_updated';
 const DEFAULT_TIMEOUT = 60000; // Increased to 60 seconds for more reliable streaming
+
+/**
+ * Get the browser event name used when model configurations change
+ * Allows UI components (e.g. ChatPanel) to subscribe and refresh their state
+ */
+export const getModelConfigsUpdatedEventName = (): string => {
+  return MODEL_CONFIGS_UPDATED_EVENT;
+};
+
+/**
+ * Emit a browser event to notify listeners that model configs have changed
+ * Safe in Electron and browser environments; no-op on server
+ */
+const emitModelConfigsUpdatedEvent = (configs: ModelConfigList): void => {
+  if (typeof window === 'undefined') {
+    logger.debug('Skipping model configs updated event emit on non-browser environment', undefined, 'ModelConfig');
+    return;
+  }
+
+  try {
+    const detail = {
+      modelsCount: configs.models.length,
+      defaultModelId: configs.defaultModelId,
+    };
+
+    logger.info('Emitting model configuration updated event', detail, 'ModelConfig');
+
+    const event = new CustomEvent(MODEL_CONFIGS_UPDATED_EVENT, { detail });
+    window.dispatchEvent(event);
+  } catch (error) {
+    logger.error('Failed to emit model configuration updated event', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }, 'ModelConfig');
+  }
+};
 
 /**
  * Check if running in Electron environment
@@ -258,6 +294,15 @@ export const saveModelConfigs = async (configs: ModelConfigList): Promise<{ succ
         error: err instanceof Error ? err.message : 'Unknown error',
       }, 'ModelConfig');
     });
+
+    // Notify all browser-side listeners (e.g. ChatPanel) that model configs changed
+    if (saveResult.success) {
+      emitModelConfigsUpdatedEvent(configs);
+    } else {
+      logger.warn('Skipping model configuration updated event emit due to save failure', {
+        error: saveResult.error,
+      }, 'ModelConfig');
+    }
     
     return saveResult;
   } catch (error) {
