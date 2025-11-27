@@ -7,7 +7,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { MessageSquare, Plus, Trash2 } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -24,6 +24,7 @@ interface ConversationListProps {
   activeConversationId: string | null;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
+  onDeleteConversation: (conversationId: string) => void;
 }
 
 const ConversationList = ({
@@ -31,6 +32,7 @@ const ConversationList = ({
   activeConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
 }: ConversationListProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
@@ -49,6 +51,37 @@ const ConversationList = ({
   const handleNewConversation = () => {
     logger.info('New conversation requested', undefined, 'ConversationList');
     onNewConversation();
+  };
+
+  const handleDeleteConversationClick = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    conversationId: string
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    logger.info(
+      'Delete conversation button clicked',
+      { conversationId },
+      'ConversationList'
+    );
+
+    onDeleteConversation(conversationId);
+  };
+
+  const handleDeleteConversationKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    conversationId: string
+  ) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      logger.debug(
+        'Delete conversation triggered from keyboard',
+        { conversationId, key: event.key },
+        'ConversationList'
+      );
+      onDeleteConversation(conversationId);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, conversationId: string) => {
@@ -122,38 +155,60 @@ const ConversationList = ({
               const isActive = conversation.id === activeConversationId;
 
               return (
-                <button
+                <div
                   key={conversation.id}
-                  onClick={() => handleConversationClick(conversation.id)}
-                  onKeyDown={(e) => handleKeyDown(e, conversation.id)}
-                  tabIndex={0}
-                  aria-label={`Conversation: ${conversation.title}`}
-                  className={`w-full px-3 py-2 text-left border-2 transition-all ${
-                    isActive
-                      ? 'bg-primary text-primary-foreground border-border shadow-md'
-                      : 'bg-card text-card-foreground border-border hover:bg-accent hover:text-accent-foreground shadow-sm hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none'
-                  }`}
+                  className="flex items-stretch gap-1"
                 >
-                  <div className="flex items-start gap-2">
-                    <MessageSquare className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {conversation.title}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs opacity-70">
-                          {formatTimestamp(conversation.timestamp)}
-                        </span>
-                        <span className="text-xs opacity-70">
-                          •
-                        </span>
-                        <span className="text-xs opacity-70">
-                          {conversation.messageCount} msg
-                        </span>
+                  <button
+                    onClick={() => handleConversationClick(conversation.id)}
+                    onKeyDown={(event) => handleKeyDown(event, conversation.id)}
+                    tabIndex={0}
+                    aria-label={`Conversation: ${conversation.title}`}
+                    className={`flex-1 px-3 py-2 text-left border-2 transition-all ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground border-border shadow-md'
+                        : 'bg-card text-card-foreground border-border hover:bg-accent hover:text-accent-foreground shadow-sm hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <MessageSquare className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {conversation.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs opacity-70">
+                            {formatTimestamp(conversation.timestamp)}
+                          </span>
+                          <span className="text-xs opacity-70">
+                            •
+                          </span>
+                          <span className="text-xs opacity-70">
+                            {conversation.messageCount} msg
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+
+                  <button
+                    onClick={(event) =>
+                      handleDeleteConversationClick(event, conversation.id)
+                    }
+                    onKeyDown={(event) =>
+                      handleDeleteConversationKeyDown(event, conversation.id)
+                    }
+                    tabIndex={0}
+                    aria-label={`${dict.chat.deleteConversationAriaLabel}: ${conversation.title}`}
+                    className={`px-2 py-2 border-2 transition-all flex items-center justify-center ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground border-border shadow-md hover:bg-primary/90'
+                        : 'bg-card text-muted-foreground border-border shadow-sm hover:bg-destructive/10 hover:text-destructive hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none'
+                    }`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               );
             })}
           </div>

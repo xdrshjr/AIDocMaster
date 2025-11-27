@@ -239,3 +239,4 @@ The fix ensures that Electron and Flask always use the same configuration file b
 
 The enhanced logging makes it easy to verify that model switching is working correctly and helps diagnose any future issues.
 
+

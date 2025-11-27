@@ -9,8 +9,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { logger } from '@/lib/logger';
+import { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import ConversationList, { type Conversation } from './ConversationList';
 import ChatPanel, { type Message } from './ChatPanel';
+import ConfirmDialog from './ConfirmDialog';
 
 interface AIChatContainerProps {
   conversations: Conversation[];
@@ -29,6 +32,10 @@ const AIChatContainer = ({
   onActiveConversationChange,
   onMessagesMapChange,
 }: AIChatContainerProps) => {
+  const { locale } = useLanguage();
+  const dict = getDictionary(locale);
+  const [conversationToDelete, setConversationToDelete] = useState<Conversation | null>(null);
+
   useEffect(() => {
     logger.component('AIChatContainer', 'mounted', {
       conversationsCount: conversations.length,
@@ -80,6 +87,99 @@ const AIChatContainer = ({
       conversationId: newConversation.id,
       totalConversations: conversations.length + 1 
     }, 'AIChatContainer');
+  };
+
+  const handleRequestDeleteConversation = (conversationId: string) => {
+    const targetConversation = conversations.find(
+      (conversation) => conversation.id === conversationId
+    );
+
+    if (!targetConversation) {
+      logger.warn(
+        'Requested delete for non-existent conversation',
+        { conversationId },
+        'AIChatContainer'
+      );
+      return;
+    }
+
+    logger.info(
+      'Delete conversation requested',
+      {
+        conversationId: targetConversation.id,
+        title: targetConversation.title,
+        messageCount: targetConversation.messageCount,
+        isActive: targetConversation.id === activeConversationId,
+      },
+      'AIChatContainer'
+    );
+
+    setConversationToDelete(targetConversation);
+  };
+
+  const handleConfirmDeleteConversation = () => {
+    if (!conversationToDelete) {
+      logger.warn(
+        'Confirm delete called with no pending conversation',
+        undefined,
+        'AIChatContainer'
+      );
+      return;
+    }
+
+    const conversationId = conversationToDelete.id;
+    const isDeletingActive = conversationId === activeConversationId;
+
+    const updatedConversations = conversations.filter(
+      (conversation) => conversation.id !== conversationId
+    );
+
+    const updatedMessagesMap = new Map(messagesMap);
+    const removedMessages = updatedMessagesMap.get(conversationId)?.length ?? 0;
+    updatedMessagesMap.delete(conversationId);
+
+    let nextActiveConversationId = activeConversationId;
+
+    if (isDeletingActive) {
+      nextActiveConversationId =
+        updatedConversations.length > 0 ? updatedConversations[0].id : null;
+    }
+
+    logger.info(
+      'Conversation deleted',
+      {
+        conversationId,
+        title: conversationToDelete.title,
+        wasActive: isDeletingActive,
+        remainingConversations: updatedConversations.length,
+        removedMessages,
+        nextActiveConversationId,
+      },
+      'AIChatContainer'
+    );
+
+    onConversationsChange(updatedConversations);
+    onMessagesMapChange(updatedMessagesMap);
+    onActiveConversationChange(nextActiveConversationId);
+
+    setConversationToDelete(null);
+  };
+
+  const handleCancelDeleteConversation = () => {
+    if (!conversationToDelete) {
+      return;
+    }
+
+    logger.debug(
+      'Conversation delete cancelled by user',
+      {
+        conversationId: conversationToDelete.id,
+        title: conversationToDelete.title,
+      },
+      'AIChatContainer'
+    );
+
+    setConversationToDelete(null);
   };
 
   const handleMessagesChange = useCallback((messages: Message[]) => {
@@ -148,6 +248,7 @@ const AIChatContainer = ({
           activeConversationId={activeConversationId}
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
+          onDeleteConversation={handleRequestDeleteConversation}
         />
       </div>
 
@@ -166,6 +267,19 @@ const AIChatContainer = ({
           </div>
         )}
       </div>
+
+      {conversationToDelete && (
+        <ConfirmDialog
+          isOpen={!!conversationToDelete}
+          title={dict.chat.deleteConversationTitle}
+          description={dict.chat.deleteConversationDescription}
+          confirmLabel={dict.chat.deleteConversationConfirm}
+          cancelLabel={dict.chat.deleteConversationCancel}
+          isDestructive
+          onConfirm={handleConfirmDeleteConversation}
+          onCancel={handleCancelDeleteConversation}
+        />
+      )}
     </div>
   );
 };

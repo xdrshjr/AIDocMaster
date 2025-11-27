@@ -404,3 +404,4 @@ def get_available_agents() -> list[Dict[str, Any]]:
     """Get list of available agents for API responses"""
     return [agent.to_dict() for agent in AVAILABLE_AGENTS]
 
+
