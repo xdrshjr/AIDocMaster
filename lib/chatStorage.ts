@@ -18,6 +18,13 @@ interface SerializedConversation {
   title: string;
   timestamp: string;
   messageCount: number;
+  type?: 'basic' | 'chatbot' | 'agent';
+  metadata?: {
+    chatbotId?: string;
+    chatbotName?: string;
+    agentType?: string;
+    agentName?: string;
+  };
 }
 
 interface SerializedMessage {
@@ -61,6 +68,8 @@ const serializeAIChatState = (state: AIChatState): SerializedAIChatState => {
     title: conv.title,
     timestamp: conv.timestamp.toISOString(),
     messageCount: conv.messageCount,
+    type: conv.type,
+    metadata: conv.metadata,
   }));
 
   const messagesByConversationId: Record<string, SerializedMessage[]> = {};
@@ -90,6 +99,8 @@ const deserializeAIChatState = (serialized: SerializedAIChatState): AIChatState 
     title: conv.title,
     timestamp: new Date(conv.timestamp),
     messageCount: conv.messageCount,
+    type: conv.type,
+    metadata: conv.metadata,
   }));
 
   const messagesMap = new Map<string, Message[]>();

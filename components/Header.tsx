@@ -7,11 +7,12 @@
 
 import { logger } from '@/lib/logger';
 import { useEffect, useState, useRef } from 'react';
-import { Download, ChevronDown } from 'lucide-react';
+import { Download, ChevronDown, Settings } from 'lucide-react';
 import SettingsDialog from './SettingsDialog';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { cn } from '@/lib/utils';
 import type { Task } from './Taskbar';
 
 interface HeaderProps {
@@ -20,6 +21,7 @@ interface HeaderProps {
   exportDisabled?: boolean;
   tasks?: Task[];
   onTaskChange?: (taskId: string) => void;
+  onSettingsClick?: () => void;
 }
 
 /**
@@ -199,10 +201,12 @@ const Header = ({
   exportDisabled = false,
   tasks = [],
   onTaskChange,
+  onSettingsClick,
 }: HeaderProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [hoveredSettings, setHoveredSettings] = useState(false);
 
   useEffect(() => {
     logger.component('Header', 'mounted');
@@ -234,6 +238,18 @@ const Header = ({
     onTaskChange?.(taskId);
   };
 
+  const handleSettingsClick = () => {
+    logger.info('Settings button clicked in header', undefined, 'Header');
+    onSettingsClick?.();
+  };
+
+  const handleSettingsKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleSettingsClick();
+    }
+  };
+
   return (
     <>
       <header className="h-8 bg-background border-b-4 border-border flex items-center px-4 shadow-sm">
@@ -245,9 +261,39 @@ const Header = ({
             onTaskChange={handleTaskChange}
           />
 
-          {/* Right: Language Switcher & Export Button */}
+          {/* Right: Language Switcher, Settings Button & Export Button */}
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
+            
+            {/* Settings Button */}
+            <div className="relative group">
+              <button
+                onClick={handleSettingsClick}
+                onKeyDown={handleSettingsKeyDown}
+                onMouseEnter={() => setHoveredSettings(true)}
+                onMouseLeave={() => setHoveredSettings(false)}
+                tabIndex={0}
+                aria-label={dict.taskbar.settings}
+                className={cn(
+                  'px-3 py-1 text-sm font-medium text-foreground',
+                  'hover:bg-accent hover:text-accent-foreground transition-colors',
+                  'flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-ring'
+                )}
+              >
+                <Settings className="w-4 h-4" />
+                <span>{dict.taskbar.settings}</span>
+              </button>
+
+              {/* Tooltip */}
+              {hoveredSettings && (
+                <div className="absolute top-full right-0 mt-1 z-50 pointer-events-none">
+                  <div className="bg-popover text-popover-foreground px-2 py-1 border-2 border-border shadow-md whitespace-nowrap">
+                    <span className="text-xs font-medium">{dict.taskbar.settings}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {showExport && (
               <button
                 onClick={handleExportClick}

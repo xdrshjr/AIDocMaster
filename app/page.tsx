@@ -7,6 +7,7 @@ import Taskbar from '@/components/Taskbar';
 import AIDocValidationContainer from '@/components/AIDocValidationContainer';
 import AIChatContainer from '@/components/AIChatContainer';
 import AIAutoWriterContainer from '@/components/AIAutoWriterContainer';
+import SettingsContainer from '@/components/SettingsContainer';
 import FloatingChatButton from '@/components/FloatingChatButton';
 import { FileCheck, MessageSquare, PenSquare } from 'lucide-react';
 import { getDictionary } from '@/lib/i18n/dictionaries';
@@ -182,6 +183,11 @@ export default function Home() {
     setActiveTaskId(taskId);
   };
 
+  const handleSettingsClick = () => {
+    logger.info('Settings button clicked', undefined, 'Home');
+    setActiveTaskId('settings');
+  };
+
   const handleContentChange = (content: string) => {
     setEditorContent(content);
   };
@@ -318,6 +324,7 @@ export default function Home() {
         exportDisabled={!isExportReady}
         tasks={tasks}
         onTaskChange={handleTaskChange}
+        onSettingsClick={handleSettingsClick}
       />
       
       <div className="flex-1 flex overflow-hidden">
@@ -363,6 +370,9 @@ export default function Home() {
               onDocumentFunctionsReady={handleDocumentFunctionsReady}
               onContentChange={handleContentChange}
             />
+          )}
+          {activeTaskId === 'settings' && (
+            <SettingsContainer />
           )}
         </main>
       </div>

@@ -104,21 +104,22 @@ const tryLoadFromPythonBackend = async (): Promise<MCPConfigList | null> => {
 
 /**
  * Load MCP configurations from storage
+ * IMPORTANT: All MCP servers are forced to be disabled on load to ensure default closed state
  */
 export const loadMCPConfigs = async (): Promise<MCPConfigList> => {
   logger.info('Loading MCP configurations', undefined, 'MCPConfig');
 
   try {
+    let configList: MCPConfigList;
+    
     // First, try to load from Python backend
     const backendConfigs = await tryLoadFromPythonBackend();
     if (backendConfigs && backendConfigs.mcpServers.length > 0) {
       logger.info('Using MCP configurations from Python backend', {
         count: backendConfigs.mcpServers.length,
       }, 'MCPConfig');
-      return backendConfigs;
-    }
-    
-    if (isElectron()) {
+      configList = backendConfigs;
+    } else if (isElectron()) {
       // Use Electron IPC to load from file system
       logger.debug('Loading MCP configs from Electron file system', undefined, 'MCPConfig');
       const result = await (window as any).electronAPI.loadMCPConfigs();
@@ -127,12 +128,12 @@ export const loadMCPConfigs = async (): Promise<MCPConfigList> => {
         logger.success('MCP configurations loaded from Electron', {
           count: result.data.mcpServers.length,
         }, 'MCPConfig');
-        return result.data;
+        configList = result.data;
       } else {
         logger.warn('Failed to load MCP configs from Electron, using defaults', {
           error: result.error,
         }, 'MCPConfig');
-        return getDefaultMCPConfigs();
+        configList = getDefaultMCPConfigs();
       }
     } else {
       // Use localStorage for browser
@@ -144,12 +145,85 @@ export const loadMCPConfigs = async (): Promise<MCPConfigList> => {
         logger.success('MCP configurations loaded from localStorage', {
           count: parsed.mcpServers.length,
         }, 'MCPConfig');
-        return parsed;
+        configList = parsed;
+      } else {
+        logger.info('No stored MCP configurations found, using defaults', undefined, 'MCPConfig');
+        configList = getDefaultMCPConfigs();
       }
-      
-      logger.info('No stored MCP configurations found, using defaults', undefined, 'MCPConfig');
-      return getDefaultMCPConfigs();
     }
+
+    // CRITICAL: Force all MCP servers to be disabled on load
+    // This ensures MCP functionality is always closed by default when entering the software
+    const enabledMCPs = configList.mcpServers.filter(mcp => mcp.isEnabled === true);
+    
+    if (enabledMCPs.length > 0) {
+      logger.info('Disabling all enabled MCP servers on load (default closed state)', {
+        enabledCount: enabledMCPs.length,
+        enabledMCPNames: enabledMCPs.map(m => m.name),
+      }, 'MCPConfig');
+
+      // Stop any running MCP servers in Electron environment
+      if (isElectron()) {
+        for (const mcp of enabledMCPs) {
+          try {
+            logger.debug('Stopping MCP server process on load', {
+              id: mcp.id,
+              name: mcp.name,
+            }, 'MCPConfig');
+            const stopResult = await (window as any).electronAPI.stopMCPServer(mcp.id);
+            
+            if (stopResult.success) {
+              logger.success('MCP server process stopped on load', {
+                id: mcp.id,
+                name: mcp.name,
+              }, 'MCPConfig');
+            } else {
+              logger.warn('Failed to stop MCP server process on load (may not be running)', {
+                id: mcp.id,
+                name: mcp.name,
+                error: stopResult.error,
+              }, 'MCPConfig');
+            }
+          } catch (error) {
+            logger.warn('Exception while stopping MCP server on load', {
+              id: mcp.id,
+              name: mcp.name,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            }, 'MCPConfig');
+          }
+        }
+      }
+
+      // Force all MCPs to be disabled
+      const currentTime = new Date().toISOString();
+      configList.mcpServers = configList.mcpServers.map(mcp => ({
+        ...mcp,
+        isEnabled: false,
+        updatedAt: mcp.isEnabled ? currentTime : mcp.updatedAt, // Only update timestamp if state changed
+      }));
+
+      // Save the updated configuration to ensure persistence
+      logger.debug('Saving MCP configurations with all servers disabled', {
+        totalCount: configList.mcpServers.length,
+      }, 'MCPConfig');
+      const saveResult = await saveMCPConfigs(configList);
+      
+      if (saveResult.success) {
+        logger.success('MCP configurations saved with all servers disabled', {
+          totalCount: configList.mcpServers.length,
+        }, 'MCPConfig');
+      } else {
+        logger.warn('Failed to save MCP configurations after disabling servers', {
+          error: saveResult.error,
+        }, 'MCPConfig');
+      }
+    } else {
+      logger.debug('All MCP servers are already disabled, no action needed', {
+        totalCount: configList.mcpServers.length,
+      }, 'MCPConfig');
+    }
+
+    return configList;
   } catch (error) {
     logger.error('Failed to load MCP configurations', {
       error: error instanceof Error ? error.message : 'Unknown error',

@@ -159,6 +159,45 @@ interface ElectronAPI {
     success: boolean;
     error?: string;
   }>;
+  loadChatBotConfigs: () => Promise<{
+    success: boolean;
+    error?: string;
+    data: {
+      bots: Array<{
+        id: string;
+        name: string;
+        systemPrompt: string;
+        modelId: string;
+        temperature: number;
+        maxTokens?: number;
+        topP?: number;
+        frequencyPenalty?: number;
+        presencePenalty?: number;
+        isEnabled?: boolean;
+        createdAt?: string;
+        updatedAt?: string;
+      }>;
+    };
+  }>;
+  saveChatBotConfigs: (configs: {
+    bots: Array<{
+      id: string;
+      name: string;
+      systemPrompt: string;
+      modelId: string;
+      temperature: number;
+      maxTokens?: number;
+      topP?: number;
+      frequencyPenalty?: number;
+      presencePenalty?: number;
+      isEnabled?: boolean;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
 }
 
 interface Window {

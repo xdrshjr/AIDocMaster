@@ -459,6 +459,11 @@ const MCP_CONFIG_FILE = 'mcp-configs.json';
 const AI_CHAT_STATE_FILE = 'ai-chat-state.json';
 
 /**
+ * Chat Bot Configuration File Path
+ */
+const CHAT_BOT_CONFIG_FILE = 'chat-bot-configs.json';
+
+/**
  * MCP Server Processes
  */
 const mcpProcesses = new Map();
@@ -482,6 +487,13 @@ function getMCPConfigPath() {
  */
 function getAIChatStatePath() {
   return path.join(app.getPath('userData'), AI_CHAT_STATE_FILE);
+}
+
+/**
+ * Get chat bot configuration file path
+ */
+function getChatBotConfigPath() {
+  return path.join(app.getPath('userData'), CHAT_BOT_CONFIG_FILE);
 }
 
 /**
@@ -805,8 +817,87 @@ ipcMain.handle('load-mcp-configs', async () => {
     const fileContent = fs.readFileSync(configPath, 'utf-8');
     const configs = JSON.parse(fileContent);
 
+    // CRITICAL: Force all MCP servers to be disabled on load
+    // This ensures MCP functionality is always closed by default when entering the software
+    const enabledMCPs = (configs.mcpServers || []).filter(mcp => mcp.isEnabled === true);
+    
+    if (enabledMCPs.length > 0) {
+      logger.info('Disabling all enabled MCP servers on load (default closed state)', {
+        enabledCount: enabledMCPs.length,
+        enabledMCPNames: enabledMCPs.map(m => m.name),
+      });
+
+      // Stop any running MCP server processes
+      for (const mcp of enabledMCPs) {
+        try {
+          if (mcpProcesses.has(mcp.id)) {
+            logger.debug('Stopping MCP server process on load', {
+              id: mcp.id,
+              name: mcp.name,
+            });
+            
+            const mcpData = mcpProcesses.get(mcp.id);
+            if (mcpData && mcpData.process) {
+              mcpData.process.kill();
+              mcpProcesses.delete(mcp.id);
+              logger.success('MCP server process stopped on load', {
+                id: mcp.id,
+                name: mcp.name,
+              });
+            }
+          } else {
+            logger.debug('MCP server not running, skipping stop', {
+              id: mcp.id,
+              name: mcp.name,
+            });
+          }
+        } catch (error) {
+          logger.warn('Exception while stopping MCP server on load', {
+            id: mcp.id,
+            name: mcp.name,
+            error: error.message,
+          });
+        }
+      }
+
+      // Force all MCPs to be disabled
+      const currentTime = new Date().toISOString();
+      configs.mcpServers = configs.mcpServers.map(mcp => ({
+        ...mcp,
+        isEnabled: false,
+        updatedAt: mcp.isEnabled ? currentTime : mcp.updatedAt, // Only update timestamp if state changed
+      }));
+
+      // Save the updated configuration to ensure persistence
+      logger.debug('Saving MCP configurations with all servers disabled', {
+        totalCount: configs.mcpServers.length,
+      });
+      
+      try {
+        // Ensure directory exists
+        const configDir = path.dirname(configPath);
+        if (!fs.existsSync(configDir)) {
+          fs.mkdirSync(configDir, { recursive: true });
+        }
+        
+        fs.writeFileSync(configPath, JSON.stringify(configs, null, 2), 'utf-8');
+        logger.success('MCP configurations saved with all servers disabled', {
+          totalCount: configs.mcpServers.length,
+        });
+      } catch (saveError) {
+        logger.warn('Failed to save MCP configurations after disabling servers', {
+          error: saveError.message,
+        });
+      }
+    } else {
+      logger.debug('All MCP servers are already disabled, no action needed', {
+        totalCount: configs.mcpServers?.length || 0,
+      });
+    }
+
     logger.success('MCP configurations loaded successfully', {
       count: configs.mcpServers?.length || 0,
+      allDisabled: true,
     });
 
     return {
@@ -1053,6 +1144,96 @@ ipcMain.handle('get-mcp-server-status', async (event, id) => {
     startedAt: mcpData.startedAt,
     name: mcpData.config.name,
   };
+});
+
+/**
+ * IPC Handler: Load chat bot configurations from file system
+ */
+ipcMain.handle('load-chat-bot-configs', async () => {
+  logger.info('IPC: load-chat-bot-configs called');
+  
+  try {
+    const configPath = getChatBotConfigPath();
+    logger.debug('Loading chat bot configs from file', { path: configPath });
+
+    // Check if file exists
+    if (!fs.existsSync(configPath)) {
+      logger.info('Chat bot config file does not exist, returning empty config');
+      return {
+        success: true,
+        data: { bots: [] },
+      };
+    }
+
+    // Read file
+    const fileContent = fs.readFileSync(configPath, 'utf-8');
+    const configs = JSON.parse(fileContent);
+
+    logger.success('Chat bot configurations loaded successfully', {
+      count: configs.bots?.length || 0,
+    });
+
+    return {
+      success: true,
+      data: configs,
+    };
+  } catch (error) {
+    logger.error('Failed to load chat bot configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+      data: { bots: [] },
+    };
+  }
+});
+
+/**
+ * IPC Handler: Save chat bot configurations to file system
+ */
+ipcMain.handle('save-chat-bot-configs', async (event, configs) => {
+  logger.info('IPC: save-chat-bot-configs called', {
+    botCount: configs.bots?.length || 0,
+  });
+
+  try {
+    const configPath = getChatBotConfigPath();
+    logger.debug('Saving chat bot configs to file', { path: configPath });
+
+    // Ensure directory exists
+    const configDir = path.dirname(configPath);
+    if (!fs.existsSync(configDir)) {
+      logger.debug('Creating config directory', { dir: configDir });
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // Write file with pretty formatting
+    const jsonContent = JSON.stringify(configs, null, 2);
+    fs.writeFileSync(configPath, jsonContent, 'utf-8');
+
+    logger.success('Chat bot configurations saved successfully', {
+      path: configPath,
+      count: configs.bots?.length || 0,
+      size: `${jsonContent.length} bytes`,
+    });
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    logger.error('Failed to save chat bot configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
 });
 
 logger.info('Electron main process initialized');

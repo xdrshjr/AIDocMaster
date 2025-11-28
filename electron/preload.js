@@ -487,6 +487,68 @@ const electronAPI = {
       };
     }
   },
+
+  /**
+   * Load chat bot configurations from file system
+   */
+  loadChatBotConfigs: async () => {
+    try {
+      logger.info('Loading chat bot configurations');
+      const result = await ipcRenderer.invoke('load-chat-bot-configs');
+      
+      if (result.success) {
+        logger.info('Chat bot configurations loaded successfully', {
+          count: result.data.bots?.length || 0,
+        });
+      } else {
+        logger.error('Failed to load chat bot configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while loading chat bot configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+        data: { bots: [] },
+      };
+    }
+  },
+
+  /**
+   * Save chat bot configurations to file system
+   */
+  saveChatBotConfigs: async (configs) => {
+    try {
+      logger.info('Saving chat bot configurations', {
+        count: configs.bots?.length || 0,
+      });
+      
+      const result = await ipcRenderer.invoke('save-chat-bot-configs', configs);
+      
+      if (result.success) {
+        logger.info('Chat bot configurations saved successfully');
+      } else {
+        logger.error('Failed to save chat bot configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while saving chat bot configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  },
 };
 
 /**

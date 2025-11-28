@@ -20,6 +20,8 @@ import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
 import { loadModelConfigs, getDefaultModel, getModelConfigsUpdatedEventName, type ModelConfig } from '@/lib/modelConfig';
 import type { MCPConfig } from '@/lib/mcpConfig';
+import type { Conversation } from './ConversationList';
+import { getChatBotById } from '@/lib/chatBotConfig';
 
 export interface Message extends ChatMessageType {
   id: string;
@@ -30,13 +32,15 @@ export interface Message extends ChatMessageType {
 
 interface ChatPanelProps {
   conversationId: string | null;
+  conversation: Conversation | null;
   messagesMap: Map<string, Message[]>;
   onMessagesMapChange: (messagesMap: Map<string, Message[]>) => void;
   onMessagesChange?: (messages: Message[]) => void;
 }
 
 const ChatPanel = ({ 
-  conversationId, 
+  conversationId,
+  conversation,
   messagesMap,
   onMessagesMapChange,
   onMessagesChange 
@@ -253,10 +257,39 @@ const ChatPanel = ({
       const apiUrl = await buildApiUrl('/api/chat');
       logger.debug('Using API URL for chat', { apiUrl }, 'ChatPanel');
 
-      // Prepare request body with selected model ID and MCP tools
-      const requestBody = {
+      // Prepare system prompt and model based on conversation type
+      let systemPrompt: string | undefined = undefined;
+      let conversationModelId: string | null = selectedModel?.id || null;
+
+      if (conversation?.type === 'chatbot' && conversation.metadata?.chatbotId) {
+        try {
+          const chatbot = await getChatBotById(conversation.metadata.chatbotId);
+          if (chatbot) {
+            systemPrompt = chatbot.systemPrompt;
+            conversationModelId = chatbot.modelId;
+            logger.info('Using chat bot configuration', {
+              chatbotId: chatbot.id,
+              chatbotName: chatbot.name,
+              modelId: chatbot.modelId,
+              hasSystemPrompt: !!systemPrompt,
+            }, 'ChatPanel');
+          } else {
+            logger.warn('Chat bot not found, using default settings', {
+              chatbotId: conversation.metadata.chatbotId,
+            }, 'ChatPanel');
+          }
+        } catch (error) {
+          logger.error('Failed to load chat bot configuration', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            chatbotId: conversation.metadata.chatbotId,
+          }, 'ChatPanel');
+        }
+      }
+
+      // Prepare request body with selected model ID, system prompt, and MCP tools
+      const requestBody: any = {
         messages: apiMessages,
-        modelId: selectedModel?.id || null,
+        modelId: conversationModelId,
         mcpEnabled: mcpEnabled && enabledMCPTools.length > 0,
         mcpTools: mcpEnabled ? enabledMCPTools.map(t => ({
           id: t.id,
@@ -267,12 +300,20 @@ const ChatPanel = ({
         })) : [],
       };
 
+      // Add system prompt if available
+      if (systemPrompt) {
+        requestBody.systemPrompt = systemPrompt;
+        logger.debug('System prompt added to request', {
+          systemPromptLength: systemPrompt.length,
+        }, 'ChatPanel');
+      }
+
       logger.info('[ModelSelection] Sending chat request with selected model and MCP tools', {
-        selectedModelId: selectedModel?.id || 'no-model-selected',
+        selectedModelId: conversationModelId || 'no-model-selected',
         selectedModelName: selectedModel?.name || 'default',
         selectedModelApiName: selectedModel?.modelName || 'unknown',
         selectedModelApiUrl: selectedModel?.apiUrl || 'unknown',
-        willUseModelId: selectedModel?.id || null,
+        willUseModelId: conversationModelId,
         messageCount: apiMessages.length,
         mcpEnabled: mcpEnabled && enabledMCPTools.length > 0,
         mcpToolCount: enabledMCPTools.length,
@@ -280,6 +321,8 @@ const ChatPanel = ({
         enabledToolsCount: enabledMCPTools.length,
         toolDetails: enabledMCPTools.map(t => ({ name: t.name, id: t.id })),
         conversationId,
+        conversationType: conversation?.type || 'basic',
+        hasSystemPrompt: !!systemPrompt,
       }, 'ChatPanel');
 
       // Debug: Log the actual request body being sent

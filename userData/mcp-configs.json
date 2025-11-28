@@ -11,9 +11,9 @@
         "TAVILY_API_KEY": "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"
       },
       "id": "mcp_1732597200000",
-      "isEnabled": true,
+      "isEnabled": false,
       "name": "tavily-ai-tavily-mcp",
-      "updatedAt": "2025-11-26T10:06:17.065Z"
+      "updatedAt": "2025-11-28T06:57:39.515Z"
     },
     {
       "args": [

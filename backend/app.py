@@ -458,6 +458,7 @@ def chat():
         
         messages = data.get('messages', [])
         model_id = data.get('modelId')  # Get optional model ID from request
+        system_prompt = data.get('systemPrompt')  # Get optional system prompt from request
         mcp_enabled = data.get('mcpEnabled', False)  # Check if MCP is enabled
         mcp_tools = data.get('mcpTools', [])  # Get enabled MCP tools
         
@@ -478,6 +479,8 @@ def chat():
             'messageCount': len(messages),
             'requestedModelId': model_id,
             'usingDefaultModel': model_id is None,
+            'hasSystemPrompt': bool(system_prompt),
+            'systemPromptLength': len(system_prompt) if system_prompt else 0,
             'mcpEnabled': mcp_enabled,
             'mcpToolCount': len(mcp_tools) if mcp_enabled else 0,
             'mcpToolNames': [t.get('name') for t in mcp_tools] if mcp_tools else [],
@@ -514,9 +517,18 @@ def chat():
         })
         
         # Prepare system message
+        # Use custom system prompt if provided, otherwise use default
+        default_system_prompt = 'You are a helpful AI assistant for DocAIMaster, an AI-powered document editing and validation tool. You help users with document-related questions, provide guidance on using the tool, and assist with document editing tasks. Be concise, friendly, and professional.'
+        system_content = system_prompt if system_prompt else default_system_prompt
+        
+        app.logger.debug('System message prepared', extra={
+            'usingCustomPrompt': bool(system_prompt),
+            'systemPromptLength': len(system_content),
+        })
+        
         system_message = {
             'role': 'system',
-            'content': 'You are a helpful AI assistant for DocAIMaster, an AI-powered document editing and validation tool. You help users with document-related questions, provide guidance on using the tool, and assist with document editing tasks. Be concise, friendly, and professional.'
+            'content': system_content
         }
         
         full_messages = [system_message] + messages
@@ -1787,7 +1799,45 @@ def mcp_configs():
             with open(config_path, 'r', encoding='utf-8') as f:
                 configs = json.load(f)
             
-            app.logger.info(f'Returning {len(configs.get("mcpServers", []))} MCP configurations')
+            # CRITICAL: Force all MCP servers to be disabled on load
+            # This ensures MCP functionality is always closed by default when entering the software
+            enabled_mcps = [mcp for mcp in configs.get('mcpServers', []) if mcp.get('isEnabled', False)]
+            
+            if enabled_mcps:
+                app.logger.info('Disabling all enabled MCP servers on load (default closed state)', extra={
+                    'enabled_count': len(enabled_mcps),
+                    'enabled_mcp_names': [mcp.get('name', 'unknown') for mcp in enabled_mcps]
+                })
+                
+                # Force all MCPs to be disabled
+                current_time = datetime.now().isoformat()
+                for mcp in configs.get('mcpServers', []):
+                    if mcp.get('isEnabled', False):
+                        mcp['isEnabled'] = False
+                        mcp['updatedAt'] = current_time
+                
+                # Save the updated configuration to ensure persistence
+                app.logger.debug('Saving MCP configurations with all servers disabled', extra={
+                    'total_count': len(configs.get('mcpServers', []))
+                })
+                
+                try:
+                    with open(config_path, 'w', encoding='utf-8') as f:
+                        json.dump(configs, f, indent=2, ensure_ascii=False)
+                    app.logger.info('MCP configurations saved with all servers disabled', extra={
+                        'total_count': len(configs.get('mcpServers', []))
+                    })
+                except Exception as save_error:
+                    app.logger.warning(f'Failed to save MCP configurations after disabling servers: {str(save_error)}')
+            else:
+                app.logger.debug('All MCP servers are already disabled, no action needed', extra={
+                    'total_count': len(configs.get('mcpServers', []))
+                })
+            
+            app.logger.info(f'Returning {len(configs.get("mcpServers", []))} MCP configurations (all disabled)', extra={
+                'total_count': len(configs.get('mcpServers', [])),
+                'all_disabled': True
+            })
             
             return jsonify({
                 'success': True,

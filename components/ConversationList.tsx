@@ -6,24 +6,34 @@
 
 'use client';
 
-import { useEffect } from 'react';
-import { MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { MessageSquare, Plus, Trash2, Bot, Sparkles } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import NewConversationDialog, { type ConversationType } from './NewConversationDialog';
+
+export type ConversationType = 'basic' | 'chatbot' | 'agent';
 
 export interface Conversation {
   id: string;
   title: string;
   timestamp: Date;
   messageCount: number;
+  type?: ConversationType;
+  metadata?: {
+    chatbotId?: string;
+    chatbotName?: string;
+    agentType?: string;
+    agentName?: string;
+  };
 }
 
 interface ConversationListProps {
   conversations: Conversation[];
   activeConversationId: string | null;
   onSelectConversation: (conversationId: string) => void;
-  onNewConversation: () => void;
+  onNewConversation: (type?: ConversationType, metadata?: { chatbotId?: string; agentType?: string }) => void;
   onDeleteConversation: (conversationId: string) => void;
 }
 
@@ -36,21 +46,50 @@ const ConversationList = ({
 }: ConversationListProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
-
-  useEffect(() => {
-    logger.component('ConversationList', 'mounted', {
-      conversationCount: conversations.length,
-    });
-  }, [conversations.length]);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleConversationClick = (conversationId: string) => {
     logger.info('Conversation selected', { conversationId }, 'ConversationList');
     onSelectConversation(conversationId);
   };
 
-  const handleNewConversation = () => {
-    logger.info('New conversation requested', undefined, 'ConversationList');
-    onNewConversation();
+  const handleNewConversationClick = () => {
+    logger.info('New conversation button clicked, opening dialog', undefined, 'ConversationList');
+    setIsDialogOpen(true);
+  };
+
+  const handleDialogConfirm = (type: ConversationType, metadata?: { chatbotId?: string; agentType?: string }) => {
+    logger.info('New conversation confirmed from dialog', { type, metadata }, 'ConversationList');
+    setIsDialogOpen(false);
+    onNewConversation(type, metadata);
+  };
+
+  const handleDialogClose = () => {
+    logger.debug('New conversation dialog closed', undefined, 'ConversationList');
+    setIsDialogOpen(false);
+  };
+
+  const getConversationIcon = (conversation: Conversation) => {
+    const type = conversation.type || 'basic';
+    switch (type) {
+      case 'chatbot':
+        return <Bot className="w-4 h-4 flex-shrink-0 mt-0.5 text-purple-500" />;
+      case 'agent':
+        return <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5 text-green-500" />;
+      default:
+        return <MessageSquare className="w-4 h-4 flex-shrink-0 mt-0.5" />;
+    }
+  };
+
+  const getConversationTypeLabel = (conversation: Conversation) => {
+    const type = conversation.type || 'basic';
+    if (type === 'chatbot' && conversation.metadata?.chatbotName) {
+      return conversation.metadata.chatbotName;
+    }
+    if (type === 'agent' && conversation.metadata?.agentName) {
+      return conversation.metadata.agentName;
+    }
+    return null;
   };
 
   const handleDeleteConversationClick = (
@@ -94,7 +133,7 @@ const ConversationList = ({
   const handleNewKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      handleNewConversation();
+      handleNewConversationClick();
     }
   };
 
@@ -124,7 +163,7 @@ const ConversationList = ({
       {/* Header with New Conversation button */}
       <div className="p-3 border-b-2 border-sidebar-border">
         <button
-          onClick={handleNewConversation}
+          onClick={handleNewConversationClick}
           onKeyDown={handleNewKeyDown}
           tabIndex={0}
           aria-label={dict.chat.newConversation}
@@ -171,12 +210,20 @@ const ConversationList = ({
                     }`}
                   >
                     <div className="flex items-start gap-2">
-                      <MessageSquare className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      {getConversationIcon(conversation)}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
                           {conversation.title}
                         </p>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {getConversationTypeLabel(conversation) && (
+                            <>
+                              <span className="text-xs opacity-70 font-medium">
+                                {getConversationTypeLabel(conversation)}
+                              </span>
+                              <span className="text-xs opacity-70">•</span>
+                            </>
+                          )}
                           <span className="text-xs opacity-70">
                             {formatTimestamp(conversation.timestamp)}
                           </span>
@@ -214,6 +261,13 @@ const ConversationList = ({
           </div>
         )}
       </div>
+
+      {/* New Conversation Dialog */}
+      <NewConversationDialog
+        isOpen={isDialogOpen}
+        onClose={handleDialogClose}
+        onConfirm={handleDialogConfirm}
+      />
     </aside>
   );
 };

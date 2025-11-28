@@ -11,9 +11,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import ConversationList, { type Conversation } from './ConversationList';
+import ConversationList, { type Conversation, type ConversationType } from './ConversationList';
 import ChatPanel, { type Message } from './ChatPanel';
 import ConfirmDialog from './ConfirmDialog';
+import { getChatBotById } from '@/lib/chatBotConfig';
+import { buildApiUrl } from '@/lib/apiConfig';
 
 interface AIChatContainerProps {
   conversations: Conversation[];
@@ -50,6 +52,7 @@ const AIChatContainer = ({
         title: 'New Conversation',
         timestamp: new Date(),
         messageCount: 0,
+        type: 'basic',
       };
       
       onConversationsChange([initialConversation]);
@@ -72,12 +75,93 @@ const AIChatContainer = ({
     onActiveConversationChange(conversationId);
   };
 
-  const handleNewConversation = () => {
+  const handleNewConversation = async (
+    type?: ConversationType,
+    metadata?: { chatbotId?: string; agentType?: string }
+  ) => {
+    logger.info('Creating new conversation', { type, metadata }, 'AIChatContainer');
+
+    let conversationTitle = `Conversation ${conversations.length + 1}`;
+    let conversationType: ConversationType = type || 'basic';
+    let conversationMetadata: Conversation['metadata'] = {};
+
+    // Handle different conversation types
+    if (type === 'chatbot' && metadata?.chatbotId) {
+      try {
+        const chatbot = await getChatBotById(metadata.chatbotId);
+        if (chatbot) {
+          conversationTitle = chatbot.name;
+          conversationMetadata = {
+            chatbotId: chatbot.id,
+            chatbotName: chatbot.name,
+          };
+          logger.info('Chat bot conversation created', {
+            conversationId: `conv-${Date.now()}`,
+            chatbotId: chatbot.id,
+            chatbotName: chatbot.name,
+          }, 'AIChatContainer');
+        } else {
+          logger.warn('Chat bot not found, falling back to basic conversation', {
+            chatbotId: metadata.chatbotId,
+          }, 'AIChatContainer');
+          conversationType = 'basic';
+        }
+      } catch (error) {
+        logger.error('Failed to load chat bot, falling back to basic conversation', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          chatbotId: metadata.chatbotId,
+        }, 'AIChatContainer');
+        conversationType = 'basic';
+      }
+    } else if (type === 'agent' && metadata?.agentType) {
+      try {
+        // Load agent info from API
+        const apiUrl = await buildApiUrl('/api/agents');
+        const response = await fetch(apiUrl);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const agent = data.agents?.find((a: any) => a.type === metadata.agentType);
+          
+          if (agent) {
+            conversationTitle = agent.name;
+            conversationMetadata = {
+              agentType: agent.type,
+              agentName: agent.name,
+            };
+            logger.info('Agent conversation created', {
+              conversationId: `conv-${Date.now()}`,
+              agentType: agent.type,
+              agentName: agent.name,
+            }, 'AIChatContainer');
+          } else {
+            logger.warn('Agent not found, falling back to basic conversation', {
+              agentType: metadata.agentType,
+            }, 'AIChatContainer');
+            conversationType = 'basic';
+          }
+        } else {
+          logger.warn('Failed to load agents, falling back to basic conversation', {
+            status: response.status,
+          }, 'AIChatContainer');
+          conversationType = 'basic';
+        }
+      } catch (error) {
+        logger.error('Failed to load agent info, falling back to basic conversation', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          agentType: metadata.agentType,
+        }, 'AIChatContainer');
+        conversationType = 'basic';
+      }
+    }
+
     const newConversation: Conversation = {
       id: `conv-${Date.now()}`,
-      title: `Conversation ${conversations.length + 1}`,
+      title: conversationTitle,
       timestamp: new Date(),
       messageCount: 0,
+      type: conversationType,
+      metadata: Object.keys(conversationMetadata).length > 0 ? conversationMetadata : undefined,
     };
     
     onConversationsChange([newConversation, ...conversations]);
@@ -85,6 +169,7 @@ const AIChatContainer = ({
     
     logger.info('New conversation created', { 
       conversationId: newConversation.id,
+      type: conversationType,
       totalConversations: conversations.length + 1 
     }, 'AIChatContainer');
   };
@@ -257,6 +342,7 @@ const AIChatContainer = ({
         {activeConversationId ? (
           <ChatPanel
             conversationId={activeConversationId}
+            conversation={conversations.find(c => c.id === activeConversationId) || null}
             messagesMap={messagesMap}
             onMessagesMapChange={onMessagesMapChange}
             onMessagesChange={handleMessagesChange}
