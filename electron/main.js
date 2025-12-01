@@ -462,6 +462,7 @@ const AI_CHAT_STATE_FILE = 'ai-chat-state.json';
  * Chat Bot Configuration File Path
  */
 const CHAT_BOT_CONFIG_FILE = 'chat-bot-configs.json';
+const IMAGE_SERVICE_CONFIG_FILE = 'image-service-configs.json';
 
 /**
  * MCP Server Processes
@@ -494,6 +495,13 @@ function getAIChatStatePath() {
  */
 function getChatBotConfigPath() {
   return path.join(app.getPath('userData'), CHAT_BOT_CONFIG_FILE);
+}
+
+/**
+ * Get image service configuration file path
+ */
+function getImageServiceConfigPath() {
+  return path.join(app.getPath('userData'), IMAGE_SERVICE_CONFIG_FILE);
 }
 
 /**
@@ -1225,6 +1233,133 @@ ipcMain.handle('save-chat-bot-configs', async (event, configs) => {
     };
   } catch (error) {
     logger.error('Failed to save chat bot configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+});
+
+/**
+ * IPC Handler: Load image service configurations from file system
+ */
+ipcMain.handle('load-image-service-configs', async () => {
+  logger.info('IPC: load-image-service-configs called');
+  
+  try {
+    const configPath = getImageServiceConfigPath();
+    logger.debug('Loading image service configs from file', { path: configPath });
+
+    // Check if file exists
+    if (!fs.existsSync(configPath)) {
+      logger.info('Image service config file does not exist, creating default config');
+      
+      // Create default image service configuration with Unsplash
+      const defaultApiKeys = [
+        'pNt91wUHTHCzruNDxcJcP5POjKb-qV_RSIE4ZXDvMk4',
+        'fKuy32Nf8HRuRyFYPyaORvdZ0hc-oeQ-xb9zPz2Baeo',
+      ];
+      
+      const defaultServiceId = `image_service_${Date.now()}`;
+      const defaultConfig = {
+        imageServices: [
+          {
+            id: defaultServiceId,
+            name: 'Unsplash',
+            type: 'unsplash',
+            apiKeys: defaultApiKeys,
+            isDefault: true,
+            isDeletable: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        defaultServiceId: defaultServiceId,
+      };
+
+      // Ensure directory exists
+      const configDir = path.dirname(configPath);
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+      }
+
+      // Write default config
+      fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf-8');
+      
+      logger.success('Default image service configuration created', {
+        count: defaultConfig.imageServices.length,
+      });
+
+      return {
+        success: true,
+        data: defaultConfig,
+      };
+    }
+
+    // Read file
+    const fileContent = fs.readFileSync(configPath, 'utf-8');
+    const configs = JSON.parse(fileContent);
+
+    logger.success('Image service configurations loaded successfully', {
+      count: configs.imageServices?.length || 0,
+    });
+
+    return {
+      success: true,
+      data: configs,
+    };
+  } catch (error) {
+    logger.error('Failed to load image service configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+      data: { imageServices: [] },
+    };
+  }
+});
+
+/**
+ * IPC Handler: Save image service configurations to file system
+ */
+ipcMain.handle('save-image-service-configs', async (event, configs) => {
+  logger.info('IPC: save-image-service-configs called', {
+    serviceCount: configs.imageServices?.length || 0,
+  });
+
+  try {
+    const configPath = getImageServiceConfigPath();
+    logger.debug('Saving image service configs to file', { path: configPath });
+
+    // Ensure directory exists
+    const configDir = path.dirname(configPath);
+    if (!fs.existsSync(configDir)) {
+      logger.debug('Creating config directory', { dir: configDir });
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // Write file with pretty formatting
+    const jsonContent = JSON.stringify(configs, null, 2);
+    fs.writeFileSync(configPath, jsonContent, 'utf-8');
+
+    logger.success('Image service configurations saved successfully', {
+      path: configPath,
+      count: configs.imageServices?.length || 0,
+      size: `${jsonContent.length} bytes`,
+    });
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    logger.error('Failed to save image service configurations', {
       error: error.message,
       stack: error.stack,
     });

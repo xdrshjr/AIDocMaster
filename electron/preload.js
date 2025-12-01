@@ -549,6 +549,68 @@ const electronAPI = {
       };
     }
   },
+
+  /**
+   * Load image service configurations from file system
+   */
+  loadImageServiceConfigs: async () => {
+    try {
+      logger.info('Loading image service configurations');
+      const result = await ipcRenderer.invoke('load-image-service-configs');
+      
+      if (result.success) {
+        logger.info('Image service configurations loaded successfully', {
+          count: result.data.imageServices?.length || 0,
+        });
+      } else {
+        logger.error('Failed to load image service configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while loading image service configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+        data: { imageServices: [] },
+      };
+    }
+  },
+
+  /**
+   * Save image service configurations to file system
+   */
+  saveImageServiceConfigs: async (configs) => {
+    try {
+      logger.info('Saving image service configurations', {
+        count: configs.imageServices?.length || 0,
+      });
+      
+      const result = await ipcRenderer.invoke('save-image-service-configs', configs);
+      
+      if (result.success) {
+        logger.info('Image service configurations saved successfully');
+      } else {
+        logger.error('Failed to save image service configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while saving image service configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  },
 };
 
 /**

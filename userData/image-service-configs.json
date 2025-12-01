@@ -1,0 +1,18 @@
+{
+  "imageServices": [
+    {
+      "id": "image_service_1764598187.067105",
+      "name": "Unsplash",
+      "type": "unsplash",
+      "apiKeys": [
+        "pNt91wUHTHCzruNDxcJcP5POjKb-qV_RSIE4ZXDvMk4",
+        "fKuy32Nf8HRuRyFYPyaORvdZ0hc-oeQ-xb9zPz2Baeo"
+      ],
+      "isDefault": true,
+      "isDeletable": false,
+      "createdAt": "2025-12-01T22:09:47.067105",
+      "updatedAt": "2025-12-01T22:09:47.067105"
+    }
+  ],
+  "defaultServiceId": "image_service_1764598187.067105"
+}
