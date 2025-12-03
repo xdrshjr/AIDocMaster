@@ -13,6 +13,7 @@ export interface ModelConfig {
   apiUrl: string;
   apiKey: string;
   modelName: string;
+  maxToken?: number;
   isDefault?: boolean;
   isEnabled?: boolean;
   createdAt?: string;

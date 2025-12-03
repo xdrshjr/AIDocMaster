@@ -191,6 +191,7 @@ const en = {
   },
   settings: {
     title: 'Settings',
+    modelSettings: 'Model Settings',
     chatBots: 'Chat Bots',
     addChatBot: 'Add Chat Bot',
     editChatBot: 'Edit Chat Bot',
@@ -452,6 +453,7 @@ const zh = {
   },
   settings: {
     title: '设置',
+    modelSettings: '模型设置',
     chatBots: '对话机器人',
     addChatBot: '添加对话机器人',
     editChatBot: '编辑对话机器人',

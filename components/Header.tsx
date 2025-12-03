@@ -8,7 +8,6 @@
 import { logger } from '@/lib/logger';
 import { useEffect, useState, useRef } from 'react';
 import { Download, ChevronDown, Settings } from 'lucide-react';
-import SettingsDialog from './SettingsDialog';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getDictionary } from '@/lib/i18n/dictionaries';
@@ -35,12 +34,11 @@ interface MenuItem {
 }
 
 interface MenuBarProps {
-  onOpenSettings: () => void;
   tasks: Task[];
   onTaskChange: (taskId: string) => void;
 }
 
-const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
+const MenuBar = ({ tasks, onTaskChange }: MenuBarProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -75,12 +73,6 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
   const handleTaskMenuItemClick = (taskId: string) => {
     logger.info('Task menu item clicked', { taskId }, 'MenuBar');
     onTaskChange(taskId);
-    setOpenMenu(null);
-  };
-
-  const handleConfigMenuItemClick = () => {
-    logger.info('Config menu item clicked: Basic Config', undefined, 'MenuBar');
-    onOpenSettings();
     setOpenMenu(null);
   };
 
@@ -134,36 +126,6 @@ const MenuBar = ({ onOpenSettings, tasks, onTaskChange }: MenuBarProps) => {
         )}
       </div>
 
-      {/* Config Menu */}
-      <div
-        ref={(el) => {
-          menuRefs.current['config'] = el;
-        }}
-        className="relative"
-      >
-        <button
-          onClick={() => handleMenuClick('config')}
-          onKeyDown={(e) => handleKeyDown(e, 'config')}
-          className="px-3 py-1 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground transition-colors flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-ring"
-          aria-label="Config Menu"
-          aria-expanded={openMenu === 'config'}
-          aria-haspopup="true"
-        >
-          {dict.header.menu.config}
-          <ChevronDown className="w-3 h-3" />
-        </button>
-        {openMenu === 'config' && (
-          <div className="absolute top-full left-0 mt-1 bg-background border-2 border-border shadow-lg z-50 min-w-[180px]">
-            <button
-              onClick={handleConfigMenuItemClick}
-              className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-              aria-label="Basic Config"
-            >
-              {dict.header.menu.modelConfig}
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Info Menu */}
       <div
@@ -205,7 +167,6 @@ const Header = ({
 }: HeaderProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [hoveredSettings, setHoveredSettings] = useState(false);
 
   useEffect(() => {
@@ -221,16 +182,6 @@ const Header = ({
   const handleExportClick = () => {
     logger.info('Export button clicked', undefined, 'Header');
     onExport?.();
-  };
-
-  const handleOpenSettings = () => {
-    logger.info('Opening settings dialog from menu', undefined, 'Header');
-    setIsSettingsOpen(true);
-  };
-
-  const handleSettingsClose = () => {
-    logger.info('Settings dialog closed', undefined, 'Header');
-    setIsSettingsOpen(false);
   };
 
   const handleTaskChange = (taskId: string) => {
@@ -256,7 +207,6 @@ const Header = ({
         <div className="flex items-center justify-between w-full">
           {/* Left: Menu Bar */}
           <MenuBar
-            onOpenSettings={handleOpenSettings}
             tasks={tasks}
             onTaskChange={handleTaskChange}
           />
@@ -309,7 +259,6 @@ const Header = ({
         </div>
       </header>
 
-      <SettingsDialog isOpen={isSettingsOpen} onClose={handleSettingsClose} />
     </>
   );
 };

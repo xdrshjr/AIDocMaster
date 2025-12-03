@@ -6,11 +6,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bot, Settings as SettingsIcon, Image as ImageIcon } from 'lucide-react';
+import { Bot, Settings as SettingsIcon, Image as ImageIcon, Cpu } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import ChatBotManager from './ChatBotManager';
 import MCPSettingsPanel from './MCPSettingsPanel';
 import ImageServiceSettingsPanel from './ImageServiceSettingsPanel';
+import ModelSettingsPanel from './ModelSettingsPanel';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getDictionary } from '@/lib/i18n/dictionaries';
@@ -19,7 +20,7 @@ interface SettingsContainerProps {
   className?: string;
 }
 
-type SettingsSection = 'chat-bots' | 'mcp' | 'image-services';
+type SettingsSection = 'model-settings' | 'chat-bots' | 'mcp' | 'image-services';
 
 interface SettingsMenuItem {
   id: SettingsSection;
@@ -30,13 +31,18 @@ interface SettingsMenuItem {
 const SettingsContainer = ({ className }: SettingsContainerProps) => {
   const { locale } = useLanguage();
   const dict = getDictionary(locale);
-  const [activeSection, setActiveSection] = useState<SettingsSection>('chat-bots');
+  const [activeSection, setActiveSection] = useState<SettingsSection>('model-settings');
 
   useEffect(() => {
     logger.component('SettingsContainer', 'mounted', { activeSection });
   }, [activeSection]);
 
   const menuItems: SettingsMenuItem[] = [
+    {
+      id: 'model-settings',
+      label: dict.settings.modelSettings,
+      icon: <Cpu className="w-4 h-4" />,
+    },
     {
       id: 'chat-bots',
       label: dict.settings.chatBots,
@@ -101,6 +107,7 @@ const SettingsContainer = ({ className }: SettingsContainerProps) => {
 
       {/* Right Content Area - 75% */}
       <main className="flex-1 h-full overflow-hidden">
+        {activeSection === 'model-settings' && <ModelSettingsPanel className="h-full" />}
         {activeSection === 'chat-bots' && <ChatBotManager className="h-full" />}
         {activeSection === 'mcp' && <MCPSettingsPanel className="h-full" />}
         {activeSection === 'image-services' && <ImageServiceSettingsPanel className="h-full" />}
