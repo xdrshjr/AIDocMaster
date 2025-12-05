@@ -17,6 +17,7 @@ import WordEditorPanel, { type WordEditorPanelRef } from './WordEditorPanel';
 import ValidationResultPanel from './ValidationResultPanel';
 import { buildApiUrl } from '@/lib/apiConfig';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { type DocumentParagraph } from '@/lib/documentUtils';
 
 export interface ValidationIssue {
   id: string;
@@ -98,37 +99,45 @@ const AIDocValidationContainer = ({
     if (wordEditorRef.current && onDocumentFunctionsReady) {
       const getContent = () => {
         if (wordEditorRef.current) {
-          const editor = wordEditorRef.current.getEditor();
-          if (editor) {
-            // Return HTML content for agent to work with
-            // Agent needs HTML to preserve formatting when making modifications
-            const html = editor.getHTML();
-            logger.debug('Getting document content for agent', {
-              contentLength: html.length,
-              contentType: 'HTML',
-            }, 'AIDocValidationContainer');
-            return html;
-          }
+          // Return paragraphs array for agent to work with
+          const paragraphs = wordEditorRef.current.getParagraphs();
+          logger.debug('Getting document paragraphs for agent', {
+            paragraphCount: paragraphs.length,
+            contentType: 'paragraphs',
+          }, 'AIDocValidationContainer');
+          return paragraphs;
         }
         logger.warn('Cannot get document content - editor not available', undefined, 'AIDocValidationContainer');
-        return '';
+        return [];
       };
       
-      const updateContent = (content: string) => {
+      const updateContent = (content: string | DocumentParagraph[]) => {
         if (wordEditorRef.current) {
           const editor = wordEditorRef.current.getEditor();
           if (editor) {
             logger.info('Updating document content from agent', {
-              contentLength: content.length,
+              contentType: Array.isArray(content) ? 'paragraphs' : 'html',
+              contentLength: Array.isArray(content) ? content.length : content.length,
               previousLength: editor.getHTML().length,
             }, 'AIDocValidationContainer');
             
-            // Set HTML content
-            editor.commands.setContent(content);
-            
-            logger.success('Document content updated successfully', {
-              newLength: editor.getHTML().length,
-            }, 'AIDocValidationContainer');
+            if (Array.isArray(content)) {
+              // Update paragraphs
+              content.forEach(para => {
+                wordEditorRef.current?.updateParagraph(para.id, para.content);
+              });
+              
+              logger.success('Document paragraphs updated successfully', {
+                paragraphCount: content.length,
+              }, 'AIDocValidationContainer');
+            } else {
+              // Legacy: Set HTML content directly
+              editor.commands.setContent(content);
+              
+              logger.success('Document content updated successfully (legacy HTML)', {
+                newLength: editor.getHTML().length,
+              }, 'AIDocValidationContainer');
+            }
           } else {
             logger.error('Cannot update document content - editor not available', undefined, 'AIDocValidationContainer');
           }

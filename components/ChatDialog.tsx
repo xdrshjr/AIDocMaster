@@ -14,6 +14,7 @@ import ChatInput from './ChatInput';
 import AgentStatusPanel, { type AgentStatus, type TodoItem } from './AgentStatusPanel';
 import AgentListDialog from './AgentListDialog';
 import { logger } from '@/lib/logger';
+import { type DocumentParagraph } from '@/lib/documentUtils';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
@@ -27,8 +28,8 @@ export interface ChatDialogProps {
   onClose: () => void;
   title?: string;
   welcomeMessage?: string;
-  getDocumentContent?: () => string;
-  updateDocumentContent?: (content: string) => void;
+  getDocumentContent?: () => string | DocumentParagraph[];
+  updateDocumentContent?: (content: string | DocumentParagraph[]) => void;
   variant?: 'modal' | 'embedded';
   className?: string;
   agentVariant?: AgentVariant;
@@ -202,12 +203,16 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       logger.debug('Using agent routing API URL', { apiUrl }, 'ChatDialog');
 
       // Get document content if available (for potential document modifier agent)
-      const documentContent = getDocumentContent ? getDocumentContent() : '';
-      const hasDocument = Boolean(documentContent && documentContent.trim().length > 0);
+      const documentContent = getDocumentContent ? getDocumentContent() : null;
+      const isParagraphsArray = Array.isArray(documentContent);
+      const hasDocument = isParagraphsArray 
+        ? documentContent.length > 0
+        : Boolean(documentContent && typeof documentContent === 'string' && documentContent.trim().length > 0);
       
       if (hasDocument) {
         logger.debug('Document content available for agent routing', { 
-          contentLength: documentContent.length 
+          contentType: isParagraphsArray ? 'paragraphs' : 'html',
+          contentLength: isParagraphsArray ? documentContent.length : (documentContent as string).length,
         }, 'ChatDialog');
       } else {
         logger.debug('No document content available - routing may select auto-writer agent', 
@@ -218,6 +223,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       const requestBody = {
         request: command,
         content: documentContent,
+        content_type: isParagraphsArray ? 'paragraphs' : 'html',
         language: 'zh',
         modelId: selectedModel?.id,
       };
@@ -405,7 +411,10 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
               } else if (data.type === 'document_update') {
                 logger.info('[Agent Event] Document update received', { 
                   step: data.step,
-                  contentLength: data.updated_content?.length || 0,
+                  contentType: data.content_type || 'html',
+                  contentLength: Array.isArray(data.updated_content) 
+                    ? data.updated_content.length 
+                    : (data.updated_content?.length || 0),
                   message: data.message,
                   hasUpdateHandler: !!updateDocumentContent,
                   hasContent: !!data.updated_content,
@@ -414,16 +423,23 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                 // Update document in editor
                 if (updateDocumentContent && data.updated_content) {
                   try {
+                    const content = data.updated_content;
+                    const isParagraphs = Array.isArray(content);
+                    
                     logger.debug('[Agent Event] Calling updateDocumentContent', {
-                      contentLengthBefore: data.updated_content.length,
-                      contentPreview: data.updated_content.substring(0, 100),
+                      contentType: isParagraphs ? 'paragraphs' : 'html',
+                      contentLength: isParagraphs ? content.length : content.length,
+                      contentPreview: isParagraphs 
+                        ? `[${content.length} paragraphs]` 
+                        : content.substring(0, 100),
                     }, 'ChatDialog');
                     
-                    updateDocumentContent(data.updated_content);
+                    updateDocumentContent(content);
                     
                     logger.success('[Agent Event] Document updated successfully in editor', { 
                       step: data.step,
-                      contentLength: data.updated_content.length,
+                      contentType: isParagraphs ? 'paragraphs' : 'html',
+                      contentLength: isParagraphs ? content.length : content.length,
                     }, 'ChatDialog');
                   } catch (updateError) {
                     logger.error('[Agent Event] Failed to update document', {
@@ -435,7 +451,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                   logger.error('[Agent Event] Cannot update document - missing handler or content', {
                     hasHandler: !!updateDocumentContent,
                     hasContent: !!data.updated_content,
-                    contentLength: data.updated_content?.length || 0,
+                    contentLength: Array.isArray(data.updated_content)
+                      ? data.updated_content.length
+                      : (data.updated_content?.length || 0),
                   }, 'ChatDialog');
                 }
               } else if (data.type === 'section_progress' && isAutoWriterAgent) {

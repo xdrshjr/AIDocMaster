@@ -1549,9 +1549,25 @@ def agent_route():
     try:
         data = request.get_json() or {}
         user_request = data.get('request', '')
-        document_content = data.get('content', '')
+        document_content_raw = data.get('content', '')
+        content_type = data.get('content_type', 'html')
         language = data.get('language', 'zh')
         model_id = data.get('modelId')
+        
+        # Parse content based on type
+        if content_type == 'paragraphs' and isinstance(document_content_raw, str):
+            try:
+                document_content = json.loads(document_content_raw)
+                app.logger.info('[AgentRouter] Received paragraphs array', extra={
+                    'paragraph_count': len(document_content) if isinstance(document_content, list) else 0,
+                })
+            except (json.JSONDecodeError, TypeError) as e:
+                app.logger.warning('[AgentRouter] Failed to parse paragraphs, falling back to string', extra={
+                    'error': str(e),
+                })
+                document_content = document_content_raw
+        else:
+            document_content = document_content_raw
         
         if not user_request or not isinstance(user_request, str):
             app.logger.warning('[AgentRouter] Invalid request', extra={
@@ -1564,12 +1580,19 @@ def agent_route():
             app.logger.warning(f'[AgentRouter] Unsupported language "{language}", defaulting to zh')
             language = 'zh'
         
-        has_document = bool(document_content and document_content.strip())
+        # Check if document content exists
+        if isinstance(document_content, list):
+            has_document = len(document_content) > 0
+            content_length = len(document_content)
+        else:
+            has_document = bool(document_content and isinstance(document_content, str) and document_content.strip())
+            content_length = len(document_content) if has_document and isinstance(document_content, str) else 0
         
         app.logger.info('[AgentRouter] Processing routing request', extra={
             'request_preview': user_request[:100] + '...' if len(user_request) > 100 else user_request,
             'has_document': has_document,
-            'content_length': len(document_content) if has_document else 0,
+            'content_type': content_type,
+            'content_length': content_length,
             'language': language,
             'model_id': model_id or 'default',
         })

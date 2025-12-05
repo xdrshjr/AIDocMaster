@@ -39,6 +39,7 @@ import ImageEditorPanel from './ImageEditorPanel';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { extractParagraphsFromHTML, paragraphsToHTML, updateParagraph, type DocumentParagraph } from '@/lib/documentUtils';
 // @ts-expect-error - mammoth types may not be fully available
 import mammoth from 'mammoth/mammoth.browser';
 
@@ -53,6 +54,8 @@ interface WordEditorPanelProps {
 
 export interface WordEditorPanelRef {
   getContent: () => string;
+  getParagraphs: () => DocumentParagraph[];
+  updateParagraph: (paragraphId: string, content: string) => void;
   highlightIssue: (originalText: string, issueId: string, chunkIndex: number, severity: 'high' | 'medium' | 'low') => void;
   highlightAllIssues: (issues: Array<{ originalText: string; id: string; chunkIndex: number; severity: 'high' | 'medium' | 'low' }>) => void;
   clearHighlights: () => void;
@@ -73,6 +76,7 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
   const [selectedImageNode, setSelectedImageNode] = useState<{ pos: number; attrs: { src: string; alt?: string; width?: number | string; height?: number | string; align?: 'left' | 'center' | 'right' } } | null>(null);
   const [imageElementPosition, setImageElementPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const editorContentRef = useRef<HTMLDivElement>(null);
+  const [paragraphs, setParagraphs] = useState<DocumentParagraph[]>([]);
 
   // Generate default placeholder content
   const getDefaultEditorContent = () => {
@@ -271,6 +275,14 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
       logger.debug('Editor content updated', { contentLength: html.length }, 'WordEditorPanel');
+      
+      // Update paragraphs array when editor content changes
+      const extractedParagraphs = extractParagraphsFromHTML(html);
+      setParagraphs(extractedParagraphs);
+      logger.debug('Paragraphs extracted from editor update', {
+        paragraphCount: extractedParagraphs.length,
+      }, 'WordEditorPanel');
+      
       onContentChange?.(html);
     },
   });
@@ -285,6 +297,46 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
       const html = editor.getHTML();
       logger.debug('Getting editor content', { contentLength: html.length }, 'WordEditorPanel');
       return html;
+    },
+    getParagraphs: () => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot get paragraphs', undefined, 'WordEditorPanel');
+        return [];
+      }
+      // Extract paragraphs from current editor content
+      const html = editor.getHTML();
+      const extractedParagraphs = extractParagraphsFromHTML(html);
+      setParagraphs(extractedParagraphs);
+      logger.debug('Getting document paragraphs', {
+        paragraphCount: extractedParagraphs.length,
+      }, 'WordEditorPanel');
+      return extractedParagraphs;
+    },
+    updateParagraph: (paragraphId: string, content: string) => {
+      if (!editor) {
+        logger.warn('Editor not initialized, cannot update paragraph', { paragraphId }, 'WordEditorPanel');
+        return;
+      }
+      
+      logger.info('Updating paragraph in editor', {
+        paragraphId,
+        contentLength: content.length,
+      }, 'WordEditorPanel');
+      
+      // Update the paragraph in the paragraphs array
+      const updatedParagraphs = updateParagraph(paragraphs, paragraphId, content);
+      setParagraphs(updatedParagraphs);
+      
+      // Reconstruct HTML from updated paragraphs
+      const newHTML = paragraphsToHTML(updatedParagraphs);
+      
+      // Update editor content
+      editor.commands.setContent(newHTML);
+      
+      logger.success('Paragraph updated in editor', {
+        paragraphId,
+        newContentLength: newHTML.length,
+      }, 'WordEditorPanel');
     },
     highlightIssue: (originalText: string, issueId: string, chunkIndex: number, severity: 'high' | 'medium' | 'low') => {
       if (!editor) {
@@ -382,7 +434,7 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     getEditor: () => {
       return editor;
     },
-  }), [editor]);
+  }), [editor, paragraphs]);
 
   useEffect(() => {
     logger.component('WordEditorPanel', 'mounted');
@@ -408,6 +460,16 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     };
     
     loadModels();
+    
+    // Initialize paragraphs from editor content on mount
+    if (editor) {
+      const html = editor.getHTML();
+      const extractedParagraphs = extractParagraphsFromHTML(html);
+      setParagraphs(extractedParagraphs);
+      logger.debug('Initialized paragraphs on mount', {
+        paragraphCount: extractedParagraphs.length,
+      }, 'WordEditorPanel');
+    }
     
     return () => {
       editor?.destroy();

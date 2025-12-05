@@ -28,30 +28,42 @@ def get_planning_prompt(language: str = 'en') -> str:
 
 **规划原则：**
 - 每个TODO项应该是一个独立、明确的操作
-- **严格工具约束**：你只能使用以下三个工具，不能使用其他任何工具名称：
-  * get_document_content
-  * search_document_text
-  * modify_document_text
+- **严格工具约束**：你只能使用以下工具，不能使用其他任何工具名称：
+  * get_document_paragraphs - 获取所有段落
+  * search_document_paragraphs - 搜索段落
+  * modify_document_paragraph - 修改段落
+  * add_document_paragraph - 添加段落
+  * delete_document_paragraph - 删除段落
   * ⚠️ 绝对不允许使用 "none"、"analyze"、"think" 等其他工具名称
-  * ⚠️ 如果需要分析或思考，请使用 get_document_content 获取内容后在下一步进行修改
-- **修改文本前必须先获取原文**：
-  * 方法1：使用 get_document_content 查看完整文档内容
-  * 方法2：使用 search_document_text 精确定位要修改的文本
-- **修改时使用实际文档内容**：modify_document_text 的 original_text 必须是文档中实际存在的完整文本
-  * 不要猜测原文内容
-  * 必须包含完整的HTML标签（如果是HTML文档）
-  * 保留原文的格式、空格、换行等
-- 考虑边界情况：如果文本可能有多处出现，计划中要说明清楚
+  * ⚠️ 如果需要分析或思考，请使用 get_document_paragraphs 获取内容后在下一步进行修改
+- **文档按段落组织**：文档被组织成段落数组，每个段落有唯一的ID（如 "para-0"）
+- **修改段落前必须先获取段落**：
+  * 方法1：使用 get_document_paragraphs 查看所有段落
+  * 方法2：使用 search_document_paragraphs 搜索包含特定文本的段落
+- **修改段落时使用段落ID**：modify_document_paragraph 需要 paragraph_id 和 new_content
+  * paragraph_id 必须是文档中实际存在的段落ID（如 "para-0"）
+  * new_content 是新段落的HTML内容
+  * 不要猜测段落ID，必须先获取段落列表
+- 考虑边界情况：如果段落可能不存在，计划中要说明清楚
 
 **典型工作流示例：**
 
-示例1 - 修改标题：
-1. 使用 get_document_content 获取文档内容，找到标题的完整HTML标签
-2. 使用 modify_document_text 将整个标题标签（如 <h1>旧标题</h1>）替换为新的标签（如 <h1>新标题</h1>）
+示例1 - 修改段落：
+1. 使用 get_document_paragraphs 获取所有段落，找到要修改的段落ID
+2. 使用 modify_document_paragraph 修改段落，传入 paragraph_id 和 new_content
 
-示例2 - 修改特定文本：
-1. 使用 search_document_text 搜索关键词，获取上下文
-2. 使用 modify_document_text 替换，original_text 使用搜索到的完整上下文
+示例2 - 搜索并修改段落：
+1. 使用 search_document_paragraphs 搜索包含特定文本的段落
+2. 从搜索结果中获取 paragraph_id
+3. 使用 modify_document_paragraph 修改该段落
+
+示例3 - 添加新段落：
+1. 使用 get_document_paragraphs 查看当前段落结构
+2. 使用 add_document_paragraph 在指定位置添加新段落
+
+示例4 - 删除段落：
+1. 使用 get_document_paragraphs 或 search_document_paragraphs 找到要删除的段落ID
+2. 使用 delete_document_paragraph 删除该段落
 
 ❌ 错误示例 - 使用不存在的工具：
 {{
@@ -64,8 +76,8 @@ def get_planning_prompt(language: str = 'en') -> str:
 ✅ 正确示例 - 使用已有工具：
 {{
   "id": "1",
-  "description": "使用 get_document_content 获取并分析文档内容",
-  "tool": "get_document_content",  // ✅ 正确！使用已有工具
+  "description": "使用 get_document_paragraphs 获取所有段落",
+  "tool": "get_document_paragraphs",  // ✅ 正确！使用已有工具
   "args": {{}}
 }}
 
@@ -76,15 +88,15 @@ def get_planning_prompt(language: str = 'en') -> str:
   "todo_list": [
     {{
       "id": "1",
-      "description": "使用 get_document_content 获取文档内容以确定标题的确切格式",
-      "tool": "get_document_content",
+      "description": "使用 get_document_paragraphs 获取所有段落以找到要修改的段落",
+      "tool": "get_document_paragraphs",
       "args": {{}}
     }},
     {{
       "id": "2", 
-      "description": "使用 modify_document_text 替换标题，使用从文档中获取的完整HTML标签",
-      "tool": "modify_document_text",
-      "args": {{"original_text": "从步骤1结果中提取的完整原始文本", "modified_text": "新的完整文本"}}
+      "description": "使用 modify_document_paragraph 修改段落，使用从步骤1获取的段落ID",
+      "tool": "modify_document_paragraph",
+      "args": {{"paragraph_id": "从步骤1结果中获取的段落ID", "new_content": "新的段落HTML内容"}}
     }}
   ],
   "reasoning": "解释为什么这样规划，特别说明如何确保 original_text 准确"
@@ -95,10 +107,12 @@ def get_planning_prompt(language: str = 'en') -> str:
 - 如果用户说"修改标题"，你必须先查看文档，找到实际的标题内容和格式
 - 不要直接猜测 original_text 的内容
 - HTML文档中的文本通常包含标签，必须包含完整的标签结构
-- ⚠️ **关键规则**：每个TODO项的 "tool" 字段必须是以下三个之一：
-  * "get_document_content"
-  * "search_document_text"
-  * "modify_document_text"
+- ⚠️ **关键规则**：每个TODO项的 "tool" 字段必须是以下之一：
+  * "get_document_paragraphs"
+  * "search_document_paragraphs"
+  * "modify_document_paragraph"
+  * "add_document_paragraph"
+  * "delete_document_paragraph"
 - ⚠️ 禁止使用任何其他工具名称，包括但不限于："none"、"analyze"、"think"、"review" 等
 
 现在，请根据用户的命令制定执行计划。
@@ -117,30 +131,42 @@ def get_planning_prompt(language: str = 'en') -> str:
 
 **Planning Principles:**
 - Each TODO item should be an independent, clear operation
-- **Strict Tool Constraint**: You can ONLY use the following three tools, no other tool names are allowed:
-  * get_document_content
-  * search_document_text
-  * modify_document_text
+- **Strict Tool Constraint**: You can ONLY use the following tools, no other tool names are allowed:
+  * get_document_paragraphs
+  * search_document_paragraphs
+  * modify_document_paragraph
+  * add_document_paragraph
+  * delete_document_paragraph
   * ⚠️ Absolutely NO use of "none", "analyze", "think", or any other tool names
-  * ⚠️ If you need to analyze or think, use get_document_content to get the content then modify in the next step
-- **Always get original text before modifying**:
-  * Method 1: Use get_document_content to view the complete document
-  * Method 2: Use search_document_text to precisely locate the text to modify
-- **Use actual document content when modifying**: The original_text in modify_document_text must be the complete text that actually exists in the document
-  * Do NOT guess the original text content
-  * Must include complete HTML tags (if it's an HTML document)
-  * Preserve the original formatting, spaces, line breaks, etc.
-- Consider edge cases: If text might appear in multiple places, clarify in the plan
+  * ⚠️ If you need to analyze or think, use get_document_paragraphs to get the content then modify in the next step
+- **Document organized by paragraphs**: The document is organized as a paragraphs array, each paragraph has a unique ID (e.g., "para-0")
+- **Always get paragraphs before modifying**:
+  * Method 1: Use get_document_paragraphs to view all paragraphs
+  * Method 2: Use search_document_paragraphs to search for paragraphs containing specific text
+- **Use paragraph ID when modifying**: modify_document_paragraph requires paragraph_id and new_content
+  * paragraph_id must be an actual paragraph ID that exists in the document (e.g., "para-0")
+  * new_content is the new HTML content for the paragraph
+  * Do NOT guess paragraph IDs, must get paragraph list first
+- Consider edge cases: If paragraph might not exist, clarify in the plan
 
 **Typical Workflow Examples:**
 
-Example 1 - Modify title:
-1. Use get_document_content to get document content and find the complete HTML tag of the title
-2. Use modify_document_text to replace the entire title tag (e.g., <h1>Old Title</h1>) with the new tag (e.g., <h1>New Title</h1>)
+Example 1 - Modify paragraph:
+1. Use get_document_paragraphs to get all paragraphs and find the paragraph ID to modify
+2. Use modify_document_paragraph to modify the paragraph, passing paragraph_id and new_content
 
-Example 2 - Modify specific text:
-1. Use search_document_text to search for keywords and get context
-2. Use modify_document_text to replace, using the complete context found in search as original_text
+Example 2 - Search and modify paragraph:
+1. Use search_document_paragraphs to search for paragraphs containing specific text
+2. Get paragraph_id from search results
+3. Use modify_document_paragraph to modify that paragraph
+
+Example 3 - Add new paragraph:
+1. Use get_document_paragraphs to view current paragraph structure
+2. Use add_document_paragraph to add a new paragraph at specified position
+
+Example 4 - Delete paragraph:
+1. Use get_document_paragraphs or search_document_paragraphs to find the paragraph ID to delete
+2. Use delete_document_paragraph to delete that paragraph
 
 ❌ Wrong Example - Using non-existent tool:
 {{
@@ -153,8 +179,8 @@ Example 2 - Modify specific text:
 ✅ Correct Example - Using existing tool:
 {{
   "id": "1",
-  "description": "Use get_document_content to get and analyze document content",
-  "tool": "get_document_content",  // ✅ CORRECT! Using existing tool
+  "description": "Use get_document_paragraphs to get all paragraphs",
+  "tool": "get_document_paragraphs",  // ✅ CORRECT! Using existing tool
   "args": {{}}
 }}
 
@@ -165,15 +191,15 @@ You need to output a TODO list in JSON format:
   "todo_list": [
     {{
       "id": "1",
-      "description": "Use get_document_content to get document content and determine the exact format of the title",
-      "tool": "get_document_content",
+      "description": "Use get_document_paragraphs to get all paragraphs and find the paragraph to modify",
+      "tool": "get_document_paragraphs",
       "args": {{}}
     }},
     {{
       "id": "2",
-      "description": "Use modify_document_text to replace the title, using the complete HTML tag extracted from step 1",
-      "tool": "modify_document_text",
-      "args": {{"original_text": "Complete original text extracted from step 1 result", "modified_text": "New complete text"}}
+      "description": "Use modify_document_paragraph to modify the paragraph, using paragraph_id from step 1",
+      "tool": "modify_document_paragraph",
+      "args": {{"paragraph_id": "Paragraph ID from step 1 result", "new_content": "New paragraph HTML content"}}
     }}
   ],
   "reasoning": "Explain why this plan was created, especially how to ensure original_text is accurate"
@@ -184,10 +210,12 @@ You need to output a TODO list in JSON format:
 - If user says "modify title", you MUST first check the document to find the actual title content and format
 - Do NOT directly guess the content of original_text
 - Text in HTML documents usually contains tags, and you must include the complete tag structure
-- ⚠️ **Critical Rule**: The "tool" field in each TODO item MUST be one of these three:
-  * "get_document_content"
-  * "search_document_text"
-  * "modify_document_text"
+- ⚠️ **Critical Rule**: The "tool" field in each TODO item MUST be one of these:
+  * "get_document_paragraphs"
+  * "search_document_paragraphs"
+  * "modify_document_paragraph"
+  * "add_document_paragraph"
+  * "delete_document_paragraph"
 - ⚠️ DO NOT use any other tool names, including but not limited to: "none", "analyze", "think", "review", etc.
 
 Now, please create an execution plan based on the user's command.
@@ -220,9 +248,9 @@ def get_execution_prompt(language: str = 'en') -> str:
 5. 所有步骤完成后，输出执行结果总结
 
 **重要提示：**
-- modify_document_text 的 original_text 参数必须与文档中的文本完全匹配（包括空格、换行等）
+- modify_document_paragraph 的 paragraph_id 参数必须与文档中的段落ID完全匹配
 - 如果搜索到多处匹配，确认是否都需要修改
-- 执行前先用 search_document_text 验证文本存在
+- 执行前先用 search_document_paragraphs 验证段落存在
 
 继续执行下一个TODO项。
 """
@@ -242,9 +270,9 @@ def get_execution_prompt(language: str = 'en') -> str:
 5. After all steps complete, output an execution summary
 
 **Important Notes:**
-- The original_text parameter of modify_document_text must exactly match the document text (including spaces, line breaks, etc.)
+- The paragraph_id parameter of modify_document_paragraph must exactly match the paragraph ID in the document
 - If multiple matches are found, confirm whether all need to be modified
-- Use search_document_text to verify text exists before execution
+- Use search_document_paragraphs to verify paragraph exists before execution
 
 Continue executing the next TODO item.
 """

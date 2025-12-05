@@ -54,25 +54,44 @@ class DocumentAgent:
             'api_url': api_url,
         })
     
-    def run(self, user_command: str, document_content: str) -> Generator[Dict[str, Any], None, None]:
+    def run(self, user_command: str, document_content) -> Generator[Dict[str, Any], None, None]:
         """
         Run the agent workflow and stream results
         
         Args:
             user_command: User's command/instruction
-            document_content: Current document content
+            document_content: Current document content (HTML string or paragraphs array)
             
         Yields:
             Status updates and results
         """
+        import json
+        # Parse document_content if it's a JSON string
+        if isinstance(document_content, str):
+            try:
+                parsed = json.loads(document_content)
+                if isinstance(parsed, list):
+                    document_content = parsed
+                    logger.info('Parsed document_content as paragraphs array', extra={
+                        'paragraph_count': len(document_content),
+                    })
+            except (json.JSONDecodeError, TypeError):
+                # Not JSON, treat as HTML string
+                pass
+        
+        content_length = len(document_content) if isinstance(document_content, str) else len(document_content) if isinstance(document_content, list) else 0
         logger.info('Starting agent workflow', extra={
             'command': user_command[:100] + '...' if len(user_command) > 100 else user_command,
-            'content_length': len(document_content),
+            'content_type': 'paragraphs' if isinstance(document_content, list) else 'html',
+            'content_length': content_length,
         })
         
         try:
-            # Initialize tools with document content
-            self.tools.document_content = document_content
+            # Initialize tools with document content (supports both HTML and paragraphs)
+            if isinstance(document_content, list):
+                self.tools = DocumentTools(initial_content=document_content)
+            else:
+                self.tools = DocumentTools(initial_content=document_content)
             
             # Phase 1: Planning
             yield {
@@ -141,32 +160,58 @@ class DocumentAgent:
                 
                 # Check if this is a modify step that needs parameter refinement
                 refined_todo = todo_item
-                if todo_item.get("tool") == "modify_document_text" and execution_results:
-                    # Check if previous step was get_document_content or search
+                if todo_item.get("tool") == "modify_document_paragraph" and execution_results:
+                    # Check if previous step was get_document_paragraphs or search_document_paragraphs
                     prev_result = execution_results[-1]
-                    if prev_result.get("tool") in ["get_document_content", "search_document_text"]:
+                    if prev_result.get("tool") in ["get_document_paragraphs", "search_document_paragraphs"]:
                         logger.info('[Agent] Attempting to refine modify parameters from previous result', extra={
                             'previous_tool': prev_result.get("tool"),
                             'step': idx + 1,
                         })
                         
-                        # Try to refine the parameters using LLM
-                        refined_result = yield from self._refine_modify_parameters(
-                            todo_item, 
-                            prev_result, 
-                            user_command
-                        )
-                        
-                        if refined_result:
-                            refined_todo = refined_result
-                            logger.info('[Agent] Successfully refined modify parameters', extra={
-                                'original_params_preview': str(todo_item.get("args", {}))[:100],
-                                'refined_params_preview': str(refined_todo.get("args", {}))[:100],
-                            })
+                        # Extract paragraph_id from search results if available
+                        if prev_result.get("tool") == "search_document_paragraphs" and prev_result.get("matches"):
+                            matches = prev_result.get("matches", [])
+                            if matches:
+                                # Use the first (most relevant) match
+                                best_match = matches[0]
+                                extracted_para_id = best_match.get("paragraph_id")
+                                if extracted_para_id:
+                                    logger.info('[Agent] Extracted paragraph_id from search results', extra={
+                                        'paragraph_id': extracted_para_id,
+                                        'match_type': best_match.get("match_type"),
+                                        'relevance_score': best_match.get("relevance_score"),
+                                    })
+                                    # Update the todo item with the correct paragraph_id
+                                    refined_todo = {
+                                        **todo_item,
+                                        "args": {
+                                            **todo_item.get("args", {}),
+                                            "paragraph_id": extracted_para_id,
+                                        }
+                                    }
+                                    logger.info('[Agent] Updated todo with extracted paragraph_id', extra={
+                                        'original_args': todo_item.get("args", {}),
+                                        'refined_args': refined_todo.get("args", {}),
+                                    })
                         else:
-                            logger.warning('[Agent] Failed to refine parameters, using original', extra={
-                                'step': idx + 1,
-                            })
+                            # Try to refine the parameters using LLM
+                            refined_result = yield from self._refine_modify_parameters(
+                                todo_item, 
+                                prev_result, 
+                                user_command
+                            )
+                            
+                            if refined_result:
+                                refined_todo = refined_result
+                                logger.info('[Agent] Successfully refined modify parameters', extra={
+                                    'original_params_preview': str(todo_item.get("args", {}))[:100],
+                                    'refined_params_preview': str(refined_todo.get("args", {}))[:100],
+                                })
+                            else:
+                                logger.warning('[Agent] Failed to refine parameters, using original', extra={
+                                    'step': idx + 1,
+                                })
                 
                 result = yield from self._execute_todo(refined_todo, idx + 1, len(todo_list))
                 execution_results.append(result)
@@ -194,16 +239,26 @@ class DocumentAgent:
                 })
                 
                 # If modification was made, send updated content
-                if result.get("tool") == "modify_document_text" and result.get("success"):
+                if result.get("tool") == "modify_document_paragraph" and result.get("success"):
+                    # Determine content format based on content_type
+                    if self.tools.content_type == 'paragraphs':
+                        updated_content = self.tools.paragraphs
+                        content_type = 'paragraphs'
+                    else:
+                        updated_content = self.tools.document_content
+                        content_type = 'html'
+                    
                     yield {
                         "type": "document_update",
-                        "updated_content": self.tools.document_content,
+                        "updated_content": updated_content,
+                        "content_type": content_type,
                         "step": idx + 1,
                         "message": "Document updated" if self.language == 'en' else "文档已更新"
                     }
                     logger.info('[Agent] Document update event sent to frontend', extra={
                         'step': idx + 1,
-                        'content_length': len(self.tools.document_content),
+                        'content_type': content_type,
+                        'content_length': len(updated_content) if isinstance(updated_content, str) else len(updated_content),
                     })
             
             # Phase 3: Summary
@@ -217,12 +272,14 @@ class DocumentAgent:
             summary = yield from self._summary_phase(user_command, todo_list, execution_results)
             
             # Final result
+            final_paragraphs = self.tools.paragraphs if self.tools.content_type == 'paragraphs' else None
             yield {
                 "type": "complete",
                 "summary": summary,
                 "todo_list": todo_list,
                 "execution_results": execution_results,
-                "final_content": self.tools.document_content,
+                "final_content": final_paragraphs if final_paragraphs else self.tools.document_content,
+                "content_type": "paragraphs" if final_paragraphs else "html",
                 "message": "Task completed successfully!" if self.language == 'en' else "任务完成！"
             }
             
@@ -336,7 +393,13 @@ class DocumentAgent:
                 })
                 
                 # Validate tool names in the TODO list
-                valid_tools = {"get_document_content", "search_document_text", "modify_document_text"}
+                valid_tools = {
+                    "get_document_paragraphs",
+                    "search_document_paragraphs",
+                    "modify_document_paragraph",
+                    "add_document_paragraph",
+                    "delete_document_paragraph"
+                }
                 invalid_items = []
                 for idx, item in enumerate(todo_list):
                     tool_name = item.get("tool", "")
@@ -448,10 +511,10 @@ class DocumentAgent:
         user_command: str
     ) -> Generator[Any, None, Optional[Dict[str, Any]]]:
         """
-        Refine modify_document_text parameters using previous tool results
+        Refine modify_document_paragraph parameters using previous tool results
         
         Args:
-            todo_item: Current AgentTodo item (modify_document_text)
+            todo_item: Current AgentTodo item (modify_document_paragraph)
             prev_result: Previous tool execution result
             user_command: Original user command
             
@@ -467,26 +530,26 @@ class DocumentAgent:
             
             logger.info('[Agent] Starting parameter refinement', extra={
                 'prev_tool': prev_tool,
-                'original_text_preview': original_args.get("original_text", "")[:50],
+                'paragraph_id_preview': original_args.get("paragraph_id", "")[:50],
             })
             
             # Build refinement prompt
             if self.language == 'zh':
-                system_prompt = """你是文档编辑参数提取专家。你的任务是从前一步工具的执行结果中，提取出 modify_document_text 工具需要的精确 original_text 参数。
+                system_prompt = """你是文档编辑参数提取专家。你的任务是从前一步工具的执行结果中，提取出 modify_document_paragraph 工具需要的精确 paragraph_id 参数。
 
 **重要原则：**
-1. original_text 必须是文档中实际存在的完整文本
-2. 如果是HTML文档，必须包含完整的HTML标签结构
-3. 必须保留所有格式、空格、换行等
-4. 不要修改或简化文本内容
+1. paragraph_id 必须是搜索结果中实际存在的段落ID（如 "para-0"）
+2. 如果搜索结果中有多个匹配，选择相关性最高的（relevance_score最高的）
+3. paragraph_id 必须完全匹配，不能修改或猜测
+4. 从搜索结果的 matches 数组中提取 paragraph_id
 
 **输出格式：**
 输出JSON格式：
 ```json
 {{
-  "original_text": "从文档中提取的完整原始文本",
-  "modified_text": "修改后的文本",
-  "reasoning": "说明为什么选择这段文本"
+  "paragraph_id": "从搜索结果中提取的段落ID",
+  "new_content": "新的段落HTML内容",
+  "reasoning": "说明为什么选择这个段落ID"
 }}
 ```
 """
@@ -494,30 +557,30 @@ class DocumentAgent:
 
 前一步工具执行结果:
 工具: {prev_tool}
-结果: {str(prev_result)[:1000]}
+结果: {str(prev_result)[:2000]}
 
 当前计划的修改参数:
-- original_text: {original_args.get("original_text", "")}
-- modified_text: {original_args.get("modified_text", "")}
+- paragraph_id: {original_args.get("paragraph_id", "")}
+- new_content: {original_args.get("new_content", "")}
 
-请根据前一步的工具结果，提取出准确的 original_text。如果文档是HTML格式，确保包含完整的标签。
+请根据前一步的工具结果，从 matches 数组中提取准确的 paragraph_id。选择 relevance_score 最高的匹配项。
 """
             else:
-                system_prompt = """You are a document editing parameter extraction expert. Your task is to extract the precise original_text parameter needed for the modify_document_text tool from the previous tool's execution result.
+                system_prompt = """You are a document editing parameter extraction expert. Your task is to extract the precise paragraph_id parameter needed for the modify_document_paragraph tool from the previous tool's execution result.
 
 **Important Principles:**
-1. original_text must be the complete text that actually exists in the document
-2. If it's an HTML document, must include complete HTML tag structure
-3. Must preserve all formatting, spaces, line breaks, etc.
-4. Do not modify or simplify the text content
+1. paragraph_id must be an actual paragraph ID that exists in the search results (e.g., "para-0")
+2. If search results have multiple matches, choose the one with the highest relevance_score
+3. paragraph_id must match exactly, do not modify or guess
+4. Extract paragraph_id from the matches array in search results
 
 **Output Format:**
 Output in JSON format:
 ```json
 {{
-  "original_text": "Complete original text extracted from document",
-  "modified_text": "Modified text",
-  "reasoning": "Explain why this text was chosen"
+  "paragraph_id": "Paragraph ID extracted from search results",
+  "new_content": "New paragraph HTML content",
+  "reasoning": "Explain why this paragraph ID was chosen"
 }}
 ```
 """
@@ -525,13 +588,13 @@ Output in JSON format:
 
 Previous Tool Execution Result:
 Tool: {prev_tool}
-Result: {str(prev_result)[:1000]}
+Result: {str(prev_result)[:2000]}
 
 Currently Planned Modification Parameters:
-- original_text: {original_args.get("original_text", "")}
-- modified_text: {original_args.get("modified_text", "")}
+- paragraph_id: {original_args.get("paragraph_id", "")}
+- new_content: {original_args.get("new_content", "")}
 
-Based on the previous tool's result, extract the accurate original_text. If the document is in HTML format, ensure complete tags are included.
+Based on the previous tool's result, extract the accurate paragraph_id from the matches array. Choose the match with the highest relevance_score.
 """
             
             messages = [
@@ -580,13 +643,13 @@ Based on the previous tool's result, extract the accurate original_text. If the 
                 refined_todo = {
                     **todo_item,
                     "args": {
-                        "original_text": refinement_data.get("original_text", original_args.get("original_text", "")),
-                        "modified_text": refinement_data.get("modified_text", original_args.get("modified_text", ""))
+                        "paragraph_id": refinement_data.get("paragraph_id", original_args.get("paragraph_id", "")),
+                        "new_content": refinement_data.get("new_content", original_args.get("new_content", ""))
                     }
                 }
                 
                 logger.info('[Agent] Parameter refinement successful', extra={
-                    'refined_original_preview': refinement_data.get("original_text", "")[:100],
+                    'refined_paragraph_id': refinement_data.get("paragraph_id", ""),
                     'reasoning': refinement_data.get("reasoning", "")[:100],
                 })
                 

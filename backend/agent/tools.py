@@ -1,10 +1,12 @@
 """
 Document Tools for Agent
 Provides tools for searching and modifying document content
+Supports both HTML string and paragraph array formats
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+import json
+from typing import Dict, Any, List, Optional, Union
 
 
 logger = logging.getLogger(__name__)
@@ -14,19 +16,71 @@ class DocumentTools:
     """
     Tools for document manipulation
     Provides search and modify capabilities for the agent
+    Supports paragraph-based operations
     """
     
-    def __init__(self, initial_content: str = ""):
+    def __init__(self, initial_content: Union[str, List[Dict[str, Any]]] = ""):
         """
         Initialize document tools
         
         Args:
-            initial_content: Initial document content
+            initial_content: Initial document content (HTML string or paragraphs array)
         """
-        self.document_content = initial_content
-        logger.info('DocumentTools initialized', extra={
-            'content_length': len(initial_content),
-        })
+        # Determine content type
+        if isinstance(initial_content, list):
+            self.paragraphs = initial_content
+            self.document_content = self._paragraphs_to_html(initial_content)
+            self.content_type = 'paragraphs'
+            logger.info('DocumentTools initialized with paragraphs', extra={
+                'paragraph_count': len(initial_content),
+            })
+        else:
+            self.document_content = initial_content if isinstance(initial_content, str) else ""
+            self.paragraphs = []
+            self.content_type = 'html'
+            logger.info('DocumentTools initialized with HTML', extra={
+                'content_length': len(self.document_content),
+            })
+    
+    def _paragraphs_to_html(self, paragraphs: List[Dict[str, Any]]) -> str:
+        """Convert paragraphs array to HTML string"""
+        if not paragraphs:
+            return ""
+        # Sort by index to ensure correct order
+        sorted_paragraphs = sorted(paragraphs, key=lambda p: p.get('index', 0))
+        return '\n'.join(p.get('content', '') for p in sorted_paragraphs)
+    
+    def _html_to_paragraphs(self, html: str) -> List[Dict[str, Any]]:
+        """Convert HTML string to paragraphs array (simplified)"""
+        # This is a simplified version - in production, you'd want more sophisticated parsing
+        # For now, split by common paragraph tags
+        import re
+        paragraphs = []
+        # Split by paragraph-level tags
+        parts = re.split(r'(<p[^>]*>.*?</p>|<h[1-6][^>]*>.*?</h[1-6]>|<li[^>]*>.*?</li>)', html, flags=re.DOTALL)
+        index = 0
+        for part in parts:
+            if part.strip() and not part.strip().startswith('<'):
+                # Text content
+                paragraphs.append({
+                    'id': f'para-{index}',
+                    'index': index,
+                    'content': f'<p>{part.strip()}</p>',
+                    'text': part.strip(),
+                })
+                index += 1
+            elif part.strip() and (part.strip().startswith('<p') or part.strip().startswith('<h') or part.strip().startswith('<li')):
+                # HTML element
+                text = re.sub(r'<[^>]+>', '', part).strip()
+                if text:
+                    paragraphs.append({
+                        'id': f'para-{index}',
+                        'index': index,
+                        'content': part.strip(),
+                        'text': text,
+                    })
+                    index += 1
+        return paragraphs if paragraphs else [{'id': 'para-0', 'index': 0, 'content': html, 'text': re.sub(r'<[^>]+>', '', html).strip()}]
     
     @staticmethod
     def get_tool_descriptions() -> str:
@@ -38,61 +92,104 @@ class DocumentTools:
         """
         return """Available Tools:
 
-1. search_document_text(query: str) -> Dict
-   - Description: Search for text in the document using a query string
-   - Input: query (string) - Text to search for
+1. search_document_paragraphs(query: str) -> Dict
+   - Description: Intelligently search for paragraphs in the document using flexible matching
+   - Input: query (string) - Can be keywords, title, partial text, or any search term
    - Output: {
        "found": boolean,
        "matches": [
            {
-               "text": "matched text with context",
-               "position": position_in_document,
-               "context_before": "text before match",
-               "context_after": "text after match"
+               "paragraph_id": "para-0",
+               "paragraph_index": 0,
+               "text": "paragraph plain text",
+               "paragraph_content": "paragraph HTML content",
+               "relevance_score": 100,
+               "match_type": "exact|all_words|heading|partial|sequence"
            }
-       ]
+       ],
+       "total_matches": number
      }
-   - Use this to find specific text that needs to be modified
+   - Matching strategies (in priority order):
+     * Exact match: Query exactly appears in paragraph (highest relevance, score 100)
+     * All words: All query words appear in paragraph (score 80)
+     * Heading match: Paragraph is a heading/title and matches query (score 70)
+     * Partial match: Some query words appear in paragraph (score 50+)
+     * Sequence match: Query characters appear in order (score 5+)
+   - Results are sorted by relevance score (highest first)
+   - Use this to find paragraphs that need to be modified, even with partial keywords or titles
 
-2. modify_document_text(original_text: str, modified_text: str) -> Dict
-   - Description: Replace original text with modified text in the document
+2. modify_document_paragraph(paragraph_id: str, new_content: str) -> Dict
+   - Description: Replace a specific paragraph's content
    - Input:
-     * original_text (string) - Exact text to find and replace
-     * modified_text (string) - New text to replace with
+     * paragraph_id (string) - ID of the paragraph to modify (e.g., "para-0")
+     * new_content (string) - New HTML content for the paragraph
    - Output: {
        "success": boolean,
-       "modifications_count": number,
+       "paragraph_id": "para-0",
        "message": "description of what was changed",
-       "updated_content": "full updated document content"
+       "updated_paragraphs": [list of all paragraphs]
      }
-   - Use this to make actual changes to the document
+   - Use this to modify a specific paragraph
    - The left panel will update automatically after successful modification
 
-3. get_document_content() -> Dict
-   - Description: Get the current full document content
+3. get_document_paragraphs() -> Dict
+   - Description: Get all document paragraphs
    - Input: None
    - Output: {
-       "content": "full document text",
-       "length": number_of_characters
+       "paragraphs": [
+           {
+               "id": "para-0",
+               "index": 0,
+               "content": "paragraph HTML",
+               "text": "paragraph plain text"
+           }
+       ],
+       "total_paragraphs": number
      }
-   - Use this to review the complete document before planning changes
+   - Use this to review all paragraphs before planning changes
+
+4. add_document_paragraph(index: int, content: str) -> Dict
+   - Description: Add a new paragraph at a specific index
+   - Input:
+     * index (int) - Position to insert the paragraph
+     * content (string) - HTML content for the new paragraph
+   - Output: {
+       "success": boolean,
+       "paragraph_id": "para-X",
+       "message": "description of what was added",
+       "updated_paragraphs": [list of all paragraphs]
+     }
+   - Use this to add new paragraphs to the document
+
+5. delete_document_paragraph(paragraph_id: str) -> Dict
+   - Description: Delete a specific paragraph
+   - Input:
+     * paragraph_id (string) - ID of the paragraph to delete
+   - Output: {
+       "success": boolean,
+       "paragraph_id": "para-0",
+       "message": "description of what was deleted",
+       "updated_paragraphs": [list of remaining paragraphs]
+     }
+   - Use this to remove paragraphs from the document
 """
     
-    def search_document_text(self, query: str) -> Dict[str, Any]:
+    def search_document_paragraphs(self, query: str) -> Dict[str, Any]:
         """
-        Search for text in the document
+        Search for paragraphs in the document using intelligent matching
+        Supports exact match, partial match, keyword match, and title matching
         
         Args:
-            query: Text to search for
+            query: Text to search for (can be keywords, title, or partial text)
             
         Returns:
-            Dictionary with search results
+            Dictionary with search results, sorted by relevance
         """
-        logger.info('[TOOL] search_document_text called', extra={
-            'tool': 'search_document_text',
+        logger.info('[TOOL] search_document_paragraphs called', extra={
+            'tool': 'search_document_paragraphs',
             'query_preview': query[:50] + '...' if len(query) > 50 else query,
             'query_length': len(query),
-            'document_length': len(self.document_content),
+            'paragraph_count': len(self.paragraphs) if self.content_type == 'paragraphs' else 0,
         })
         
         if not query:
@@ -102,208 +199,233 @@ class DocumentTools:
                 "matches": [],
                 "message": "Search query cannot be empty"
             }
-            logger.debug('[TOOL] search_document_text result', extra={'result': result})
+            logger.debug('[TOOL] search_document_paragraphs result', extra={'result': result})
             return result
         
-        matches = []
-        content_lower = self.document_content.lower()
-        query_lower = query.lower()
-        
-        # Find all occurrences
-        start = 0
-        while True:
-            pos = content_lower.find(query_lower, start)
-            if pos == -1:
-                break
-            
-            # Extract context (100 chars before and after)
-            context_start = max(0, pos - 100)
-            context_end = min(len(self.document_content), pos + len(query) + 100)
-            
-            context_before = self.document_content[context_start:pos]
-            matched_text = self.document_content[pos:pos + len(query)]
-            context_after = self.document_content[pos + len(query):context_end]
-            
-            matches.append({
-                "text": matched_text,
-                "position": pos,
-                "context_before": context_before,
-                "context_after": context_after,
-                "full_context": context_before + matched_text + context_after
+        # Ensure paragraphs are loaded
+        if self.content_type == 'html' and not self.paragraphs:
+            self.paragraphs = self._html_to_paragraphs(self.document_content)
+            logger.debug('[TOOL] Converted HTML to paragraphs for search', extra={
+                'paragraph_count': len(self.paragraphs),
             })
+        
+        query_lower = query.lower().strip()
+        query_words = [w for w in query_lower.split() if len(w) > 1]  # Filter out single characters
+        
+        matches = []
+        
+        # Search in each paragraph with multiple matching strategies
+        for para in self.paragraphs:
+            para_text = para.get('text', '').lower()
+            para_content = para.get('content', '').lower()
+            para_html = para.get('content', '')
             
-            start = pos + 1
+            # Calculate relevance score
+            relevance_score = 0
+            match_type = None
+            
+            # Strategy 1: Exact match (highest priority)
+            if query_lower in para_text:
+                relevance_score += 100
+                match_type = "exact"
+                logger.debug('[TOOL] Exact match found', extra={
+                    'paragraph_id': para.get('id'),
+                })
+            
+            # Strategy 2: All query words present (high priority)
+            elif query_words and all(word in para_text for word in query_words):
+                relevance_score += 80
+                match_type = "all_words"
+                logger.debug('[TOOL] All words match found', extra={
+                    'paragraph_id': para.get('id'),
+                })
+            
+            # Strategy 3: Title/heading match (check if paragraph is a heading and query matches)
+            elif any(tag in para_html.lower() for tag in ['<h1', '<h2', '<h3', '<h4', '<h5', '<h6']):
+                if query_lower in para_text or any(word in para_text for word in query_words):
+                    relevance_score += 70
+                    match_type = "heading"
+                    logger.debug('[TOOL] Heading match found', extra={
+                        'paragraph_id': para.get('id'),
+                    })
+            
+            # Strategy 4: Partial word match (medium priority)
+            elif query_words and any(word in para_text for word in query_words):
+                matched_words = sum(1 for word in query_words if word in para_text)
+                relevance_score += 50 + (matched_words * 10)
+                match_type = "partial"
+                logger.debug('[TOOL] Partial match found', extra={
+                    'paragraph_id': para.get('id'),
+                    'matched_words': matched_words,
+                })
+            
+            # Strategy 5: Character sequence match (lower priority)
+            elif len(query_lower) >= 3:
+                # Check if query characters appear in order in paragraph
+                query_chars = list(query_lower)
+                para_chars = list(para_text)
+                char_pos = 0
+                for char in query_chars:
+                    if char_pos < len(para_chars) and char in para_chars[char_pos:]:
+                        char_pos = para_chars.index(char, char_pos) + 1
+                        relevance_score += 5
+                    else:
+                        break
+                if relevance_score > 0:
+                    match_type = "sequence"
+                    logger.debug('[TOOL] Character sequence match found', extra={
+                        'paragraph_id': para.get('id'),
+                    })
+            
+            # Add to matches if any match found
+            if relevance_score > 0:
+                matches.append({
+                    "paragraph_id": para.get('id', ''),
+                    "paragraph_index": para.get('index', 0),
+                    "text": para.get('text', ''),
+                    "paragraph_content": para.get('content', ''),
+                    "relevance_score": relevance_score,
+                    "match_type": match_type,
+                })
+                logger.debug('[TOOL] Match added to results', extra={
+                    'paragraph_id': para.get('id'),
+                    'relevance_score': relevance_score,
+                    'match_type': match_type,
+                })
+        
+        # Sort by relevance score (highest first)
+        matches.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
         
         result = {
             "found": len(matches) > 0,
             "matches": matches,
             "total_matches": len(matches),
-            "message": f"Found {len(matches)} occurrence(s) of the search query"
+            "message": f"Found {len(matches)} paragraph(s) matching the search query" if matches else "No paragraphs found matching the search query"
         }
         
-        logger.info('[TOOL] search_document_text completed', extra={
+        logger.info('[TOOL] search_document_paragraphs completed', extra={
             'found': result['found'],
             'matches_count': result['total_matches'],
-            'first_match_position': matches[0]['position'] if matches else None,
+            'matched_paragraph_ids': [m['paragraph_id'] for m in matches[:5]],  # Log top 5
+            'top_relevance': matches[0].get('relevance_score') if matches else 0,
         })
-        logger.debug('[TOOL] search_document_text detailed result', extra={
+        logger.debug('[TOOL] search_document_paragraphs detailed result', extra={
             'result': str(result)[:500],
         })
         
         return result
     
-    def modify_document_text(self, original_text: str, modified_text: str) -> Dict[str, Any]:
+    def modify_document_paragraph(self, paragraph_id: str, new_content: str) -> Dict[str, Any]:
         """
-        Modify document text by replacing original with modified
-        Supports exact matching and fuzzy matching with detailed error reporting
+        Modify a specific paragraph by ID
         
         Args:
-            original_text: Text to find and replace
-            modified_text: Replacement text
+            paragraph_id: ID of the paragraph to modify
+            new_content: New HTML content for the paragraph
             
         Returns:
             Dictionary with modification results
         """
-        logger.info('[TOOL] modify_document_text called', extra={
-            'tool': 'modify_document_text',
-            'original_length': len(original_text),
-            'modified_length': len(modified_text),
-            'original_preview': original_text[:80] + '...' if len(original_text) > 80 else original_text,
-            'modified_preview': modified_text[:80] + '...' if len(modified_text) > 80 else modified_text,
-            'document_length_before': len(self.document_content),
+        logger.info('[TOOL] modify_document_paragraph called', extra={
+            'tool': 'modify_document_paragraph',
+            'paragraph_id': paragraph_id,
+            'new_content_length': len(new_content),
+            'new_content_preview': new_content[:80] + '...' if len(new_content) > 80 else new_content,
+            'paragraph_count_before': len(self.paragraphs) if self.content_type == 'paragraphs' else 0,
         })
         
-        if not original_text:
-            logger.warning('[TOOL] Empty original text provided')
+        if not paragraph_id:
+            logger.warning('[TOOL] Empty paragraph_id provided')
             result = {
                 "success": False,
-                "modifications_count": 0,
-                "message": "Original text cannot be empty",
-                "updated_content": self.document_content
+                "paragraph_id": paragraph_id,
+                "message": "Paragraph ID cannot be empty",
+                "updated_paragraphs": self.paragraphs if self.content_type == 'paragraphs' else []
             }
-            logger.debug('[TOOL] modify_document_text result', extra={'result': result})
+            logger.debug('[TOOL] modify_document_paragraph result', extra={'result': result})
             return result
         
-        # Try exact match first (case-sensitive)
-        count = self.document_content.count(original_text)
-        
-        if count > 0:
-            logger.info('[TOOL] Found exact matches', extra={
-                'match_count': count,
-                'match_type': 'exact',
+        # Ensure paragraphs are loaded
+        if self.content_type == 'html' and not self.paragraphs:
+            self.paragraphs = self._html_to_paragraphs(self.document_content)
+            logger.debug('[TOOL] Converted HTML to paragraphs for modification', extra={
+                'paragraph_count': len(self.paragraphs),
             })
-            # Perform exact replacement
-            updated_content = self.document_content.replace(original_text, modified_text)
-            previous_length = len(self.document_content)
-            self.document_content = updated_content
+        
+        # Find the paragraph
+        para_index = -1
+        for idx, para in enumerate(self.paragraphs):
+            para_id = para.get('id', '')
+            # Try exact match first
+            if para_id == paragraph_id:
+                para_index = idx
+                break
+            # Try case-insensitive match
+            elif para_id.lower() == paragraph_id.lower():
+                para_index = idx
+                logger.info('[TOOL] Found paragraph with case-insensitive match', extra={
+                    'requested_id': paragraph_id,
+                    'actual_id': para_id,
+                })
+                break
+        
+        if para_index == -1:
+            # Log detailed information for debugging
+            available_ids = [p.get('id', '') for p in self.paragraphs]
+            logger.warning('[TOOL] Paragraph not found', extra={
+                'paragraph_id': paragraph_id,
+                'paragraph_id_type': type(paragraph_id).__name__,
+                'paragraph_id_repr': repr(paragraph_id),
+                'available_ids': available_ids,
+                'available_ids_count': len(available_ids),
+                'paragraph_count': len(self.paragraphs),
+            })
+            
+            # Try to find similar IDs (for better error message)
+            similar_ids = [pid for pid in available_ids if paragraph_id.lower() in pid.lower() or pid.lower() in paragraph_id.lower()]
+            
+            error_message = f"Paragraph with ID '{paragraph_id}' not found."
+            if similar_ids:
+                error_message += f" Did you mean one of these: {', '.join(similar_ids[:3])}?"
+            else:
+                error_message += f" Available paragraph IDs: {', '.join(available_ids[:5])}" + ("..." if len(available_ids) > 5 else "")
             
             result = {
-                "success": True,
-                "modifications_count": count,
-                "message": f"Successfully replaced {count} occurrence(s) of the text (exact match)",
-                "updated_content": updated_content
+                "success": False,
+                "paragraph_id": paragraph_id,
+                "message": error_message,
+                "available_ids": available_ids,
+                "similar_ids": similar_ids,
+                "updated_paragraphs": self.paragraphs
             }
-            
-            logger.info('[TOOL] modify_document_text completed successfully', extra={
-                'modifications_count': count,
-                'match_type': 'exact',
-                'document_length_before': previous_length,
-                'document_length_after': len(updated_content),
-                'length_diff': len(updated_content) - previous_length,
-            })
-            logger.debug('[TOOL] modify_document_text detailed result', extra={
-                'result': str(result)[:500],
-            })
-            
             return result
         
-        # Try case-insensitive match
-        logger.debug('[TOOL] Attempting case-insensitive match', extra={
-            'original_text_preview': original_text[:100],
-        })
+        # Update the paragraph
+        import re
+        old_content = self.paragraphs[para_index].get('content', '')
+        self.paragraphs[para_index]['content'] = new_content
+        self.paragraphs[para_index]['text'] = re.sub(r'<[^>]+>', '', new_content).strip()
         
-        content_lower = self.document_content.lower()
-        original_lower = original_text.lower()
-        case_insensitive_pos = content_lower.find(original_lower)
-        
-        if case_insensitive_pos != -1:
-            logger.info('[TOOL] Found case-insensitive match', extra={
-                'position': case_insensitive_pos,
-                'match_type': 'case_insensitive',
-            })
-            
-            # Extract actual text from document (preserves original case)
-            actual_text = self.document_content[case_insensitive_pos:case_insensitive_pos + len(original_text)]
-            
-            # Replace all case-insensitive occurrences
-            # Build new content by finding and replacing each occurrence
-            updated_content = self.document_content
-            replacements_made = 0
-            start_pos = 0
-            
-            while True:
-                pos = updated_content.lower().find(original_lower, start_pos)
-                if pos == -1:
-                    break
-                # Extract the actual text at this position
-                actual = updated_content[pos:pos + len(original_text)]
-                # Replace this occurrence
-                updated_content = updated_content[:pos] + modified_text + updated_content[pos + len(original_text):]
-                replacements_made += 1
-                start_pos = pos + len(modified_text)
-            
-            previous_length = len(self.document_content)
-            self.document_content = updated_content
-            
-            result = {
-                "success": True,
-                "modifications_count": replacements_made,
-                "message": f"Successfully replaced {replacements_made} occurrence(s) of the text (case-insensitive match). Original text had different case.",
-                "updated_content": updated_content,
-                "note": f"Matched '{actual_text}' with different case"
-            }
-            
-            logger.info('[TOOL] modify_document_text completed with case-insensitive match', extra={
-                'modifications_count': replacements_made,
-                'match_type': 'case_insensitive',
-                'original_case': actual_text[:50],
-                'document_length_before': previous_length,
-                'document_length_after': len(updated_content),
-                'length_diff': len(updated_content) - previous_length,
-            })
-            logger.debug('[TOOL] modify_document_text detailed result', extra={
-                'result': str(result)[:500],
-            })
-            
-            return result
-        
-        # No match found - provide detailed error with suggestions
-        logger.warning('[TOOL] Original text not found in document (tried exact and case-insensitive)', extra={
-            'original_text': original_text[:200],
-            'document_length': len(self.document_content),
-        })
-        
-        # Try to find similar text for better error message
-        suggestion = self._find_similar_text(original_text)
-        error_message = "Original text not found in document. "
-        
-        if suggestion:
-            error_message += f"Did you mean: '{suggestion}'? "
-            logger.info('[TOOL] Found similar text suggestion', extra={
-                'suggestion': suggestion[:100],
-            })
-        
-        error_message += "Please use search_document_text first to get the exact text, or use get_document_content to see the full document."
+        # Update document_content
+        self.document_content = self._paragraphs_to_html(self.paragraphs)
         
         result = {
-            "success": False,
-            "modifications_count": 0,
-            "message": error_message,
-            "updated_content": self.document_content,
-            "suggestion": suggestion if suggestion else None
+            "success": True,
+            "paragraph_id": paragraph_id,
+            "message": f"Successfully updated paragraph '{paragraph_id}'",
+            "updated_paragraphs": self.paragraphs
         }
         
-        logger.debug('[TOOL] modify_document_text result', extra={'result': str(result)[:500]})
+        logger.info('[TOOL] modify_document_paragraph completed successfully', extra={
+            'paragraph_id': paragraph_id,
+            'paragraph_index': para_index,
+            'old_content_length': len(old_content),
+            'new_content_length': len(new_content),
+        })
+        logger.debug('[TOOL] modify_document_paragraph detailed result', extra={
+            'result': str(result)[:500],
+        })
+        
         return result
     
     def _find_similar_text(self, search_text: str, max_distance: int = 5) -> Optional[str]:
@@ -339,27 +461,155 @@ class DocumentTools:
         
         return None
     
-    def get_document_content(self) -> Dict[str, Any]:
+    def get_document_paragraphs(self) -> Dict[str, Any]:
         """
-        Get current document content
+        Get all document paragraphs
         
         Returns:
-            Dictionary with document content
+            Dictionary with paragraphs array
         """
-        logger.info('[TOOL] get_document_content called', extra={
-            'tool': 'get_document_content',
-            'content_length': len(self.document_content),
+        logger.info('[TOOL] get_document_paragraphs called', extra={
+            'tool': 'get_document_paragraphs',
+            'content_type': self.content_type,
+            'paragraph_count': len(self.paragraphs) if self.content_type == 'paragraphs' else 0,
         })
         
+        # Ensure paragraphs are loaded
+        if self.content_type == 'html' and not self.paragraphs:
+            self.paragraphs = self._html_to_paragraphs(self.document_content)
+            logger.debug('[TOOL] Converted HTML to paragraphs', extra={
+                'paragraph_count': len(self.paragraphs),
+            })
+        
         result = {
-            "content": self.document_content,
-            "length": len(self.document_content),
-            "message": f"Document contains {len(self.document_content)} characters"
+            "paragraphs": self.paragraphs,
+            "total_paragraphs": len(self.paragraphs),
+            "message": f"Document contains {len(self.paragraphs)} paragraph(s)"
         }
         
-        logger.debug('[TOOL] get_document_content result', extra={
-            'length': result['length'],
-            'content_preview': self.document_content[:200] + '...' if len(self.document_content) > 200 else self.document_content,
+        logger.debug('[TOOL] get_document_paragraphs result', extra={
+            'total_paragraphs': result['total_paragraphs'],
+            'paragraph_ids': [p.get('id') for p in self.paragraphs],
+        })
+        
+        return result
+    
+    def add_document_paragraph(self, index: int, content: str) -> Dict[str, Any]:
+        """
+        Add a new paragraph at a specific index
+        
+        Args:
+            index: Position to insert the paragraph
+            content: HTML content for the new paragraph
+            
+        Returns:
+            Dictionary with modification results
+        """
+        logger.info('[TOOL] add_document_paragraph called', extra={
+            'tool': 'add_document_paragraph',
+            'index': index,
+            'content_length': len(content),
+        })
+        
+        # Ensure paragraphs are loaded
+        if self.content_type == 'html' and not self.paragraphs:
+            self.paragraphs = self._html_to_paragraphs(self.document_content)
+        
+        import re
+        # Create new paragraph
+        new_para_id = f'para-{len(self.paragraphs)}'
+        new_para = {
+            'id': new_para_id,
+            'index': index,
+            'content': content,
+            'text': re.sub(r'<[^>]+>', '', content).strip(),
+        }
+        
+        # Insert at index
+        self.paragraphs.insert(index, new_para)
+        
+        # Re-index all paragraphs
+        for idx, para in enumerate(self.paragraphs):
+            para['index'] = idx
+        
+        # Update document_content
+        self.document_content = self._paragraphs_to_html(self.paragraphs)
+        
+        result = {
+            "success": True,
+            "paragraph_id": new_para_id,
+            "message": f"Successfully added paragraph at index {index}",
+            "updated_paragraphs": self.paragraphs
+        }
+        
+        logger.info('[TOOL] add_document_paragraph completed', extra={
+            'paragraph_id': new_para_id,
+            'index': index,
+            'total_paragraphs': len(self.paragraphs),
+        })
+        
+        return result
+    
+    def delete_document_paragraph(self, paragraph_id: str) -> Dict[str, Any]:
+        """
+        Delete a specific paragraph
+        
+        Args:
+            paragraph_id: ID of the paragraph to delete
+            
+        Returns:
+            Dictionary with modification results
+        """
+        logger.info('[TOOL] delete_document_paragraph called', extra={
+            'tool': 'delete_document_paragraph',
+            'paragraph_id': paragraph_id,
+        })
+        
+        # Ensure paragraphs are loaded
+        if self.content_type == 'html' and not self.paragraphs:
+            self.paragraphs = self._html_to_paragraphs(self.document_content)
+        
+        # Find and remove the paragraph
+        para_index = -1
+        for idx, para in enumerate(self.paragraphs):
+            if para.get('id') == paragraph_id:
+                para_index = idx
+                break
+        
+        if para_index == -1:
+            logger.warning('[TOOL] Paragraph not found for deletion', extra={
+                'paragraph_id': paragraph_id,
+                'available_ids': [p.get('id') for p in self.paragraphs],
+            })
+            result = {
+                "success": False,
+                "paragraph_id": paragraph_id,
+                "message": f"Paragraph with ID '{paragraph_id}' not found",
+                "updated_paragraphs": self.paragraphs
+            }
+            return result
+        
+        # Remove the paragraph
+        self.paragraphs.pop(para_index)
+        
+        # Re-index all paragraphs
+        for idx, para in enumerate(self.paragraphs):
+            para['index'] = idx
+        
+        # Update document_content
+        self.document_content = self._paragraphs_to_html(self.paragraphs)
+        
+        result = {
+            "success": True,
+            "paragraph_id": paragraph_id,
+            "message": f"Successfully deleted paragraph '{paragraph_id}'",
+            "updated_paragraphs": self.paragraphs
+        }
+        
+        logger.info('[TOOL] delete_document_paragraph completed', extra={
+            'paragraph_id': paragraph_id,
+            'paragraph_index': para_index,
+            'total_paragraphs': len(self.paragraphs),
         })
         
         return result
@@ -382,17 +632,30 @@ class DocumentTools:
         })
         
         try:
-            if tool_name == "search_document_text":
-                result = self.search_document_text(kwargs.get("query", ""))
-            elif tool_name == "modify_document_text":
-                result = self.modify_document_text(
-                    kwargs.get("original_text", ""),
-                    kwargs.get("modified_text", "")
+            if tool_name == "search_document_paragraphs":
+                result = self.search_document_paragraphs(kwargs.get("query", ""))
+            elif tool_name == "modify_document_paragraph":
+                result = self.modify_document_paragraph(
+                    kwargs.get("paragraph_id", ""),
+                    kwargs.get("new_content", "")
                 )
-            elif tool_name == "get_document_content":
-                result = self.get_document_content()
+            elif tool_name == "get_document_paragraphs":
+                result = self.get_document_paragraphs()
+            elif tool_name == "add_document_paragraph":
+                result = self.add_document_paragraph(
+                    kwargs.get("index", 0),
+                    kwargs.get("content", "")
+                )
+            elif tool_name == "delete_document_paragraph":
+                result = self.delete_document_paragraph(kwargs.get("paragraph_id", ""))
             else:
-                valid_tools = ["get_document_content", "search_document_text", "modify_document_text"]
+                valid_tools = [
+                    "get_document_paragraphs", 
+                    "search_document_paragraphs", 
+                    "modify_document_paragraph",
+                    "add_document_paragraph",
+                    "delete_document_paragraph"
+                ]
                 logger.error('[TOOL] Unknown tool requested', extra={
                     'tool_name': tool_name,
                     'valid_tools': valid_tools,

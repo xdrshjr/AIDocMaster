@@ -24,11 +24,13 @@ export async function POST(request: NextRequest) {
     const { 
       request: userRequest, 
       content = '', 
+      content_type = 'html',
       language = 'zh', 
       modelId 
     } = body as {
       request: string;
-      content?: string;
+      content?: string | Array<{ id: string; index: number; content: string; text: string }>;
+      content_type?: 'html' | 'paragraphs';
       language?: string;
       modelId?: string;
     };
@@ -45,10 +47,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const isParagraphs = Array.isArray(content);
     logger.debug('Agent Router API: Forwarding to Flask backend', {
       requestPreview: userRequest.substring(0, 100),
       hasContent: Boolean(content),
-      contentLength: content?.length || 0,
+      contentType: isParagraphs ? 'paragraphs' : content_type,
+      contentLength: isParagraphs ? content.length : (content?.length || 0),
       language,
       modelId: modelId || 'default',
     }, 'API:AgentRoute');
@@ -73,7 +77,8 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({ 
           request: userRequest, 
-          content, 
+          content: isParagraphs ? JSON.stringify(content) : content,
+          content_type: isParagraphs ? 'paragraphs' : content_type,
           language, 
           modelId 
         }),
