@@ -126,8 +126,8 @@ backend/
 
 **计划内容**:
 - [x] 将 `app.py` 中的 `/api/chat` 实现迁移到 `domains/chat/routes.py` ✅ (已完成)
-- [ ] 将 `app.py` 中的 `/api/document-validation` 实现迁移到 `domains/document/routes.py`
-- [ ] 将 `app.py` 中的 `/api/text-processing` 实现迁移到 `domains/document/routes.py`
+- [x] 将 `app.py` 中的 `/api/document-validation` 实现迁移到 `domains/document/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/text-processing` 实现迁移到 `domains/document/routes.py` ✅ (已完成)
 - [ ] 将 `app.py` 中的 `/api/agent-route` 实现迁移到 `domains/agent/routes.py`
 - [ ] 将 `app.py` 中的 `/api/agent-validation` 实现迁移到 `domains/agent/routes.py`
 - [ ] 将 `app.py` 中的 `/api/agents` 实现迁移到 `domains/agent/routes.py`
@@ -173,6 +173,41 @@ backend/
 - ✅ 功能实现完整，包括流式响应、MCP 工具、网络搜索等
 - ✅ 日志记录完整且分级合理
 - ✅ 错误处理机制保持一致
+
+#### Document Domain 迁移详情 ✅
+
+**完成时间**: 2024-12-19
+
+**迁移内容**:
+- ✅ 将 `/api/document-validation` 路由的完整实现（包括 GET 和 POST 方法）迁移到 `domains/document/routes.py`
+- ✅ 将 `/api/text-processing` 路由的完整实现迁移到 `domains/document/routes.py`
+- ✅ 实现了流式响应支持（SSE）用于文档验证
+- ✅ 支持多语言（中文/英文）验证提示
+- ✅ 支持文本处理功能（润色、重写、检查）
+- ✅ 实现了健壮的 JSON 解析逻辑（支持多种格式和 fallback）
+- ✅ 从 `app.py` 中删除了已迁移的路由定义
+- ✅ 通过 Flask `current_app.config` 访问 `config_loader`
+- ✅ 使用模块级别的 logger，所有日志都添加了 `[Document Domain]` 前缀以便识别
+
+**技术实现**:
+- 使用 Flask Blueprint 组织路由
+- 通过 `current_app.config['config_loader']` 访问共享的配置加载器
+- 保持了所有原有的业务逻辑和错误处理
+- 日志记录保持详细，使用 `info`、`debug`、`warning`、`error` 等不同级别
+- 所有日志消息都添加了 `[Document Domain]` 前缀，便于日志过滤和追踪
+- 对于文本检查功能，实现了多层次的 JSON 解析策略，包括：
+  - 标准 JSON 解析
+  - Markdown 代码块提取
+  - JSON 对象边界查找
+  - 文本结构化提取（fallback）
+  - 最终 fallback 机制
+
+**验证要点**:
+- ✅ 路由已从 `app.py` 中移除
+- ✅ 功能实现完整，包括流式响应、多语言支持、文本处理等
+- ✅ 日志记录完整且分级合理
+- ✅ 错误处理机制保持一致
+- ✅ JSON 解析逻辑健壮，支持多种格式
 
 ### 阶段3: 共享服务提取 ⏳ (待进行)
 
@@ -257,4 +292,5 @@ logger.error('[Domain Name] Error message', exc_info=True)
 
 - **2024-12-19**: 创建重构文档，完成阶段1（入口文件创建）
 - **2024-12-19**: 完成 Chat Domain 的迁移（阶段2的第一个领域）
+- **2024-12-19**: 完成 Document Domain 的迁移（阶段2的第二个领域）
 

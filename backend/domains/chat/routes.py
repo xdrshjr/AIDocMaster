@@ -47,8 +47,8 @@ def chat():
             
             validation = config_loader.validate_llm_config(config)
             
-        return jsonify({
-            'status': 'ok',
+            return jsonify({
+                'status': 'ok',
                 'configured': validation['valid'],
                 'model': config['modelName'],
                 'endpoint': config['apiUrl']
@@ -124,7 +124,7 @@ def chat():
                 'requestedModelId': model_id,
                 'error': 'No model configured'
             })
-    return jsonify({
+            return jsonify({
                 'error': 'No LLM model configured',
                 'details': 'Please configure a model in Settings to use chat features.'
             }), 500
