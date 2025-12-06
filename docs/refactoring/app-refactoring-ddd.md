@@ -128,10 +128,10 @@ backend/
 - [x] 将 `app.py` 中的 `/api/chat` 实现迁移到 `domains/chat/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/document-validation` 实现迁移到 `domains/document/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/text-processing` 实现迁移到 `domains/document/routes.py` ✅ (已完成)
-- [ ] 将 `app.py` 中的 `/api/agent-route` 实现迁移到 `domains/agent/routes.py`
-- [ ] 将 `app.py` 中的 `/api/agent-validation` 实现迁移到 `domains/agent/routes.py`
-- [ ] 将 `app.py` 中的 `/api/agents` 实现迁移到 `domains/agent/routes.py`
-- [ ] 将 `app.py` 中的 `/api/auto-writer-agent` 实现迁移到 `domains/agent/routes.py`
+- [x] 将 `app.py` 中的 `/api/agent-route` 实现迁移到 `domains/agent/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/agent-validation` 实现迁移到 `domains/agent/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/agents` 实现迁移到 `domains/agent/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/auto-writer-agent` 实现迁移到 `domains/agent/routes.py` ✅ (已完成)
 - [ ] 将 `app.py` 中的 `/api/model-configs` 实现迁移到 `domains/model/routes.py`
 - [ ] 将 `app.py` 中的 `/api/mcp-configs` 实现迁移到 `domains/mcp/routes.py`
 - [ ] 将 `app.py` 中的 `/api/image-services/configs` 实现迁移到 `domains/image_service/routes.py`
@@ -208,6 +208,39 @@ backend/
 - ✅ 日志记录完整且分级合理
 - ✅ 错误处理机制保持一致
 - ✅ JSON 解析逻辑健壮，支持多种格式
+
+#### Agent Domain 迁移详情 ✅
+
+**完成时间**: 2024-12-19
+
+**迁移内容**:
+- ✅ 将 `/api/agent-validation` 路由的完整实现迁移到 `domains/agent/routes.py`
+- ✅ 将 `/api/agents` 路由的完整实现迁移到 `domains/agent/routes.py`
+- ✅ 将 `/api/agent-route` 路由的完整实现迁移到 `domains/agent/routes.py`
+- ✅ 将 `/api/auto-writer-agent` 路由的完整实现迁移到 `domains/agent/routes.py`
+- ✅ 实现了流式响应支持（SSE）用于所有 Agent 执行
+- ✅ 支持 Agent 路由功能（自动选择 auto-writer 或 document-modifier）
+- ✅ 支持 Agent 列表查询功能
+- ✅ 支持文档修改 Agent 和自动写作 Agent
+- ✅ 从 `app.py` 中删除了所有已迁移的路由定义
+- ✅ 通过 Flask `current_app.config` 访问 `config_loader`
+- ✅ 使用模块级别的 logger，所有日志都添加了 `[Agent Domain]` 前缀以便识别
+
+**技术实现**:
+- 使用 Flask Blueprint 组织路由
+- 通过 `current_app.config['config_loader']` 访问共享的配置加载器
+- 保持了所有原有的业务逻辑和错误处理
+- 日志记录保持详细，使用 `info`、`debug`、`warning`、`error` 等不同级别
+- 所有日志消息都添加了 `[Agent Domain]` 前缀，便于日志过滤和追踪
+- 处理了 agent 模块的导入路径问题，确保在开发环境和打包环境中都能正常工作
+- 实现了完整的错误处理和异常捕获机制
+
+**验证要点**:
+- ✅ 所有路由已从 `app.py` 中移除
+- ✅ 功能实现完整，包括 Agent 路由、验证、列表查询、自动写作等
+- ✅ 日志记录完整且分级合理
+- ✅ 错误处理机制保持一致
+- ✅ Agent 模块导入路径处理正确
 
 ### 阶段3: 共享服务提取 ⏳ (待进行)
 
@@ -293,4 +326,5 @@ logger.error('[Domain Name] Error message', exc_info=True)
 - **2024-12-19**: 创建重构文档，完成阶段1（入口文件创建）
 - **2024-12-19**: 完成 Chat Domain 的迁移（阶段2的第一个领域）
 - **2024-12-19**: 完成 Document Domain 的迁移（阶段2的第二个领域）
+- **2024-12-19**: 完成 Agent Domain 的迁移（阶段2的第三个领域）
 
