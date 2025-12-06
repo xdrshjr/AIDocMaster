@@ -134,8 +134,8 @@ backend/
 - [x] 将 `app.py` 中的 `/api/auto-writer-agent` 实现迁移到 `domains/agent/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/model-configs` 实现迁移到 `domains/model/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/mcp-configs` 实现迁移到 `domains/mcp/routes.py` ✅ (已完成)
-- [ ] 将 `app.py` 中的 `/api/image-services/configs` 实现迁移到 `domains/image_service/routes.py`
-- [ ] 将 `app.py` 中的 `/api/image-services/search` 实现迁移到 `domains/image_service/routes.py`
+- [x] 将 `app.py` 中的 `/api/image-services/configs` 实现迁移到 `domains/image_service/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/image-services/search` 实现迁移到 `domains/image_service/routes.py` ✅ (已完成)
 - [ ] 将 `app.py` 中的 `/api/search-services/configs` 实现迁移到 `domains/search_service/routes.py`
 - [ ] 将 `app.py` 中的 `/api/search-services/search` 实现迁移到 `domains/search_service/routes.py`
 - [ ] 将 `app.py` 中的 `/health` 实现迁移到 `domains/system/routes.py`
@@ -302,6 +302,39 @@ backend/
 - ✅ MCP 配置验证逻辑完整
 - ✅ 强制禁用逻辑正常工作
 
+#### Image Service Domain 迁移详情 ✅
+
+**完成时间**: 2024-12-19
+
+**迁移内容**:
+- ✅ 将 `/api/image-services/configs` 路由的完整实现（包括 GET 和 POST 方法）迁移到 `domains/image_service/routes.py`
+- ✅ 将 `/api/image-services/search` 路由的完整实现迁移到 `domains/image_service/routes.py`
+- ✅ 实现了图片服务配置的获取和保存功能
+- ✅ 支持图片服务配置的验证（必填字段检查）
+- ✅ 支持自动添加时间戳（createdAt、updatedAt）
+- ✅ 实现了图片搜索功能（支持 Unsplash API）
+- ✅ 支持默认配置创建（包含 Unsplash 服务）
+- ✅ 从 `app.py` 中删除了已迁移的路由定义
+- ✅ 实现了独立的配置路径处理函数 `_get_image_service_config_path()`，支持 Electron、打包和开发环境
+- ✅ 使用模块级别的 logger，所有日志都添加了 `[Image Service Domain]` 前缀以便识别
+
+**技术实现**:
+- 使用 Flask Blueprint 组织路由
+- 实现了独立的配置路径处理逻辑，支持 Electron、打包和开发环境
+- 保持了所有原有的业务逻辑和错误处理
+- 日志记录保持详细，使用 `info`、`debug`、`warning`、`error` 等不同级别
+- 所有日志消息都添加了 `[Image Service Domain]` 前缀，便于日志过滤和追踪
+- 实现了完整的图片服务配置验证逻辑，包括必填字段检查和数据格式验证
+- 支持 Unsplash API 图片搜索，包括分页、API 密钥轮换等功能
+
+**验证要点**:
+- ✅ 路由已从 `app.py` 中移除
+- ✅ 功能实现完整，包括图片服务配置的获取和保存、图片搜索等
+- ✅ 日志记录完整且分级合理
+- ✅ 错误处理机制保持一致
+- ✅ 图片服务配置验证逻辑完整
+- ✅ Unsplash API 集成正常工作
+
 ### 阶段3: 共享服务提取 ⏳ (待进行)
 
 **计划内容**:
@@ -389,4 +422,5 @@ logger.error('[Domain Name] Error message', exc_info=True)
 - **2024-12-19**: 完成 Agent Domain 的迁移（阶段2的第三个领域）
 - **2024-12-19**: 完成 Model Domain 的迁移（阶段2的第四个领域）
 - **2024-12-19**: 完成 MCP Domain 的迁移（阶段2的第五个领域）
+- **2024-12-19**: 完成 Image Service Domain 的迁移（阶段2的第六个领域）
 
