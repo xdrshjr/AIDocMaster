@@ -500,6 +500,7 @@ const AI_CHAT_STATE_FILE = 'ai-chat-state.json';
  */
 const CHAT_BOT_CONFIG_FILE = 'chat-bot-configs.json';
 const IMAGE_SERVICE_CONFIG_FILE = 'image-service-configs.json';
+const SEARCH_SERVICE_CONFIG_FILE = 'search-service-configs.json';
 
 /**
  * MCP Server Processes
@@ -539,6 +540,13 @@ function getChatBotConfigPath() {
  */
 function getImageServiceConfigPath() {
   return path.join(app.getPath('userData'), IMAGE_SERVICE_CONFIG_FILE);
+}
+
+/**
+ * Get search service configuration file path
+ */
+function getSearchServiceConfigPath() {
+  return path.join(app.getPath('userData'), SEARCH_SERVICE_CONFIG_FILE);
 }
 
 /**
@@ -1397,6 +1405,137 @@ ipcMain.handle('save-image-service-configs', async (event, configs) => {
     };
   } catch (error) {
     logger.error('Failed to save image service configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+});
+
+/**
+ * IPC Handler: Load search service configurations from file system
+ */
+ipcMain.handle('load-search-service-configs', async () => {
+  logger.info('IPC: load-search-service-configs called');
+  
+  try {
+    const configPath = getSearchServiceConfigPath();
+    logger.debug('Loading search service configs from file', { path: configPath });
+
+    // Check if file exists
+    if (!fs.existsSync(configPath)) {
+      logger.info('Search service config file does not exist, creating default config');
+      
+      // Create default search service configuration with Tavily
+      const defaultApiKeys = [
+        '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',
+        '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',
+      ];
+      
+      const defaultServiceId = `search_service_${Date.now()}`;
+      const defaultConfig = {
+        searchServices: [
+          {
+            id: defaultServiceId,
+            name: 'Tavily Search',
+            type: 'tavily',
+            apiKeys: defaultApiKeys,
+            isDefault: true,
+            isDeletable: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        defaultServiceId: defaultServiceId,
+      };
+
+      // Ensure directory exists
+      const configDir = path.dirname(configPath);
+      if (!fs.existsSync(configDir)) {
+        logger.debug('Creating config directory', { dir: configDir });
+        fs.mkdirSync(configDir, { recursive: true });
+      }
+
+      // Write default config
+      const jsonContent = JSON.stringify(defaultConfig, null, 2);
+      fs.writeFileSync(configPath, jsonContent, 'utf-8');
+
+      logger.success('Default search service configuration created', {
+        path: configPath,
+        count: defaultConfig.searchServices.length,
+      });
+
+      return {
+        success: true,
+        data: defaultConfig,
+      };
+    }
+
+    // Load existing config
+    const jsonContent = fs.readFileSync(configPath, 'utf-8');
+    const configs = JSON.parse(jsonContent);
+
+    logger.success('Search service configurations loaded successfully', {
+      path: configPath,
+      count: configs.searchServices?.length || 0,
+    });
+
+    return {
+      success: true,
+      data: configs,
+    };
+  } catch (error) {
+    logger.error('Failed to load search service configurations', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      success: false,
+      error: error.message,
+      data: { searchServices: [] },
+    };
+  }
+});
+
+/**
+ * IPC Handler: Save search service configurations to file system
+ */
+ipcMain.handle('save-search-service-configs', async (event, configs) => {
+  logger.info('IPC: save-search-service-configs called', {
+    serviceCount: configs.searchServices?.length || 0,
+  });
+
+  try {
+    const configPath = getSearchServiceConfigPath();
+    logger.debug('Saving search service configs to file', { path: configPath });
+
+    // Ensure directory exists
+    const configDir = path.dirname(configPath);
+    if (!fs.existsSync(configDir)) {
+      logger.debug('Creating config directory', { dir: configDir });
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // Write file with pretty formatting
+    const jsonContent = JSON.stringify(configs, null, 2);
+    fs.writeFileSync(configPath, jsonContent, 'utf-8');
+
+    logger.success('Search service configurations saved successfully', {
+      path: configPath,
+      count: configs.searchServices?.length || 0,
+      size: `${jsonContent.length} bytes`,
+    });
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    logger.error('Failed to save search service configurations', {
       error: error.message,
       stack: error.stack,
     });

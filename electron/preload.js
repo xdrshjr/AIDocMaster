@@ -611,6 +611,68 @@ const electronAPI = {
       };
     }
   },
+
+  /**
+   * Load search service configurations from file system
+   */
+  loadSearchServiceConfigs: async () => {
+    try {
+      logger.info('Loading search service configurations');
+      const result = await ipcRenderer.invoke('load-search-service-configs');
+      
+      if (result.success) {
+        logger.info('Search service configurations loaded successfully', {
+          count: result.data.searchServices?.length || 0,
+        });
+      } else {
+        logger.error('Failed to load search service configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while loading search service configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+        data: { searchServices: [] },
+      };
+    }
+  },
+
+  /**
+   * Save search service configurations to file system
+   */
+  saveSearchServiceConfigs: async (configs) => {
+    try {
+      logger.info('Saving search service configurations', {
+        count: configs.searchServices?.length || 0,
+      });
+      
+      const result = await ipcRenderer.invoke('save-search-service-configs', configs);
+      
+      if (result.success) {
+        logger.info('Search service configurations saved successfully');
+      } else {
+        logger.error('Failed to save search service configurations', {
+          error: result.error,
+        });
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('Exception while saving search service configurations', {
+        error: error.message,
+      });
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  },
 };
 
 /**

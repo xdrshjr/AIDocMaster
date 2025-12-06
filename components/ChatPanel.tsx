@@ -12,6 +12,7 @@ import { Loader2, Trash2, Bot, Trash } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import MCPToolSelector from './MCPToolSelector';
+import NetworkSearchToggle from './NetworkSearchToggle';
 import { logger } from '@/lib/logger';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -28,6 +29,7 @@ export interface Message extends ChatMessageType {
   timestamp: Date;
   isCleared?: boolean;
   mcpExecutionSteps?: any[]; // MCP execution steps for this message
+  networkSearchExecutionSteps?: any[]; // Network search execution steps for this message
 }
 
 interface ChatPanelProps {
@@ -55,6 +57,8 @@ const ChatPanel = ({
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [enabledMCPTools, setEnabledMCPTools] = useState<MCPConfig[]>([]);
+  const [networkSearchEnabled, setNetworkSearchEnabled] = useState(false);
+  const [streamingNetworkSearchSteps, setStreamingNetworkSearchSteps] = useState<any[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadModels = useCallback(async () => {
@@ -230,9 +234,11 @@ const ChatPanel = ({
     setIsLoading(true);
     setStreamingContent('');
     setStreamingMcpSteps([]); // Clear previous MCP steps when starting new request
+    setStreamingNetworkSearchSteps([]); // Clear previous network search steps when starting new request
     
     logger.debug('Initialized streaming state for new request', {
       conversationId,
+      networkSearchEnabled,
     }, 'ChatPanel');
     
     // Store the updated map in a variable accessible to the async code below
@@ -293,7 +299,7 @@ const ChatPanel = ({
         }
       }
 
-      // Prepare request body with selected model ID, system prompt, and MCP tools
+      // Prepare request body with selected model ID, system prompt, MCP tools, and network search
       const requestBody: any = {
         messages: apiMessages,
         modelId: conversationModelId,
@@ -305,6 +311,7 @@ const ChatPanel = ({
           args: t.args,
           env: t.env || {},  // Include environment variables
         })) : [],
+        networkSearchEnabled: networkSearchEnabled,
       };
 
       // Add system prompt if available
@@ -315,7 +322,7 @@ const ChatPanel = ({
         }, 'ChatPanel');
       }
 
-      logger.info('[ModelSelection] Sending chat request with selected model and MCP tools', {
+      logger.info('[ModelSelection] Sending chat request with selected model, MCP tools, and network search', {
         selectedModelId: conversationModelId || 'no-model-selected',
         selectedModelName: selectedModel?.name || 'default',
         selectedModelApiName: selectedModel?.modelName || 'unknown',
@@ -328,6 +335,7 @@ const ChatPanel = ({
         enabledToolsCount: enabledMCPTools.length,
         toolDetails: enabledMCPTools.map(t => ({ name: t.name, id: t.id })),
         note: mcpEnabled ? 'All MCP tools are available. LLM will decide which tools to call based on user query.' : 'MCP tools disabled',
+        networkSearchEnabled: networkSearchEnabled,
         conversationId,
         conversationType: conversation?.type || 'basic',
         hasSystemPrompt: !!systemPrompt,
@@ -398,10 +406,12 @@ const ChatPanel = ({
       const maxParseErrors = 10; // Maximum allowed parse errors before failing
       const streamStartTime = Date.now();
       const mcpSteps: any[] = []; // Store MCP execution steps
+      const networkSearchSteps: any[] = []; // Store network search execution steps
       
       logger.debug('Stream reader initialized', {
         conversationId,
         streamStartTime,
+        networkSearchEnabled,
       }, 'ChatPanel');
 
       try {
@@ -587,6 +597,96 @@ const ChatPanel = ({
                   }, 'ChatPanel');
                 }
                 
+                // Handle network search-specific events
+                if (data.type === 'network_search_query') {
+                  logger.info('Network search query received', {
+                    query: data.query,
+                  }, 'ChatPanel');
+                  const newStep = {
+                    type: 'search_query',
+                    query: data.query,
+                    timestamp: new Date(),
+                  };
+                  networkSearchSteps.push(newStep);
+                  
+                  flushSync(() => {
+                    setStreamingNetworkSearchSteps([...networkSearchSteps]);
+                  });
+                  
+                  logger.debug('Network search query step displayed in real-time', {
+                    totalSteps: networkSearchSteps.length,
+                  }, 'ChatPanel');
+                } else if (data.type === 'network_search_execution') {
+                  logger.info('Network search execution started', {
+                    status: data.status,
+                  }, 'ChatPanel');
+                  const newStep = {
+                    type: 'search_execution',
+                    status: data.status || 'running',
+                    error: data.error,
+                    timestamp: new Date(),
+                  };
+                  networkSearchSteps.push(newStep);
+                  
+                  flushSync(() => {
+                    setStreamingNetworkSearchSteps([...networkSearchSteps]);
+                  });
+                  
+                  logger.debug('Network search execution step displayed in real-time', {
+                    status: data.status,
+                    totalSteps: networkSearchSteps.length,
+                  }, 'ChatPanel');
+                } else if (data.type === 'network_search_results') {
+                  logger.info('Network search results received', {
+                    resultCount: data.results?.length || 0,
+                  }, 'ChatPanel');
+                  const newStep = {
+                    type: 'search_results',
+                    results: data.results,
+                    timestamp: new Date(),
+                  };
+                  networkSearchSteps.push(newStep);
+                  
+                  flushSync(() => {
+                    setStreamingNetworkSearchSteps([...networkSearchSteps]);
+                  });
+                  
+                  logger.debug('Network search results step displayed in real-time', {
+                    resultCount: data.results?.length || 0,
+                    totalSteps: networkSearchSteps.length,
+                  }, 'ChatPanel');
+                } else if (data.type === 'network_search_synthesizing') {
+                  logger.info('Network search synthesizing', undefined, 'ChatPanel');
+                  const newStep = {
+                    type: 'synthesizing',
+                    timestamp: new Date(),
+                  };
+                  networkSearchSteps.push(newStep);
+                  
+                  flushSync(() => {
+                    setStreamingNetworkSearchSteps([...networkSearchSteps]);
+                  });
+                  
+                  logger.debug('Network search synthesizing step displayed in real-time', {
+                    totalSteps: networkSearchSteps.length,
+                  }, 'ChatPanel');
+                } else if (data.type === 'network_search_final_answer') {
+                  logger.info('Network search generating final answer', undefined, 'ChatPanel');
+                  const newStep = {
+                    type: 'final_answer',
+                    timestamp: new Date(),
+                  };
+                  networkSearchSteps.push(newStep);
+                  
+                  flushSync(() => {
+                    setStreamingNetworkSearchSteps([...networkSearchSteps]);
+                  });
+                  
+                  logger.debug('Network search final answer step displayed in real-time', {
+                    totalSteps: networkSearchSteps.length,
+                  }, 'ChatPanel');
+                }
+                
                 // Handle regular chat content
                 const chunk = data.choices?.[0]?.delta?.content;
                 if (chunk) {
@@ -692,6 +792,7 @@ const ChatPanel = ({
           content: assistantContent,
           timestamp: new Date(),
           mcpExecutionSteps: mcpSteps.length > 0 ? mcpSteps : undefined,
+          networkSearchExecutionSteps: networkSearchSteps.length > 0 ? networkSearchSteps : undefined,
         };
 
         // CRITICAL FIX: Use latestMessagesMap which contains the user message
@@ -729,10 +830,12 @@ const ChatPanel = ({
 
       setStreamingContent('');
       setStreamingMcpSteps([]); // Clear streaming MCP steps
+      setStreamingNetworkSearchSteps([]); // Clear streaming network search steps
       
       logger.debug('Cleared streaming state after message completion', {
         conversationId,
         mcpStepsCleared: mcpSteps.length,
+        networkSearchStepsCleared: networkSearchSteps.length,
       }, 'ChatPanel');
 
     } catch (error) {
@@ -782,6 +885,7 @@ const ChatPanel = ({
       }
       setStreamingContent('');
       setStreamingMcpSteps([]); // Clear streaming MCP steps on error
+      setStreamingNetworkSearchSteps([]); // Clear streaming network search steps on error
       
       logger.debug('Cleared streaming state after error', {
         conversationId,
@@ -922,6 +1026,7 @@ const ChatPanel = ({
                 content={message.content}
                 timestamp={message.timestamp}
                 mcpExecutionSteps={message.mcpExecutionSteps}
+                networkSearchExecutionSteps={message.networkSearchExecutionSteps}
               />
             ))}
 
@@ -932,21 +1037,25 @@ const ChatPanel = ({
                   role="assistant"
                   content={streamingContent}
                   mcpExecutionSteps={streamingMcpSteps.length > 0 ? streamingMcpSteps : undefined}
+                  networkSearchExecutionSteps={streamingNetworkSearchSteps.length > 0 ? streamingNetworkSearchSteps : undefined}
                   isMcpStreaming={isLoading}
+                  isNetworkSearchStreaming={isLoading}
                 />
                 {/* Blinking cursor to indicate active streaming */}
                 <div className="inline-block w-1.5 h-4 bg-purple-500 ml-1 animate-pulse rounded-sm" />
               </div>
             )}
             
-            {/* Show MCP steps even before content starts streaming */}
-            {!streamingContent && streamingMcpSteps.length > 0 && isLoading && (
+            {/* Show MCP steps or network search steps even before content starts streaming */}
+            {!streamingContent && (streamingMcpSteps.length > 0 || streamingNetworkSearchSteps.length > 0) && isLoading && (
               <div className="relative">
                 <ChatMessage
                   role="assistant"
                   content=""
                   mcpExecutionSteps={streamingMcpSteps}
+                  networkSearchExecutionSteps={streamingNetworkSearchSteps}
                   isMcpStreaming={true}
+                  isNetworkSearchStreaming={true}
                 />
               </div>
             )}
@@ -994,6 +1103,12 @@ const ChatPanel = ({
           <MCPToolSelector
             disabled={isLoading}
             onMCPStateChange={handleMCPStateChange}
+          />
+
+          {/* Network Search Toggle */}
+          <NetworkSearchToggle
+            disabled={isLoading}
+            onNetworkSearchStateChange={setNetworkSearchEnabled}
           />
         </div>
 

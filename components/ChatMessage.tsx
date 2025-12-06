@@ -13,6 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import MCPToolExecutionDisplay from './MCPToolExecutionDisplay';
+import NetworkSearchExecutionDisplay from './NetworkSearchExecutionDisplay';
 import { logger } from '@/lib/logger';
 import { buildApiUrl } from '@/lib/apiConfig';
 import { getDefaultModel } from '@/lib/modelConfig';
@@ -24,10 +25,12 @@ export interface ChatMessageProps {
   content: string;
   timestamp?: Date;
   mcpExecutionSteps?: any[];
+  networkSearchExecutionSteps?: any[];
   isMcpStreaming?: boolean; // Indicates if MCP steps are still being streamed
+  isNetworkSearchStreaming?: boolean; // Indicates if network search steps are still being streamed
 }
 
-const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, isMcpStreaming = false }: ChatMessageProps) => {
+const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearchExecutionSteps, isMcpStreaming = false, isNetworkSearchStreaming = false }: ChatMessageProps) => {
   const isUser = role === 'user';
   const [showTranslation, setShowTranslation] = useState(false);
   const [translationLines, setTranslationLines] = useState<string[]>([]);
@@ -300,6 +303,14 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, isMcpStreami
           isUser ? 'items-end' : 'items-start'
         }`}
       >
+        {/* Network Search Execution Steps (for assistant messages only) */}
+        {!isUser && networkSearchExecutionSteps && networkSearchExecutionSteps.length > 0 && (
+          <NetworkSearchExecutionDisplay
+            steps={networkSearchExecutionSteps}
+            isComplete={!isNetworkSearchStreaming}
+          />
+        )}
+
         {/* MCP Execution Steps (for assistant messages only) */}
         {!isUser && mcpExecutionSteps && mcpExecutionSteps.length > 0 && (
           <MCPToolExecutionDisplay

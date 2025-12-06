@@ -198,6 +198,72 @@ interface ElectronAPI {
     success: boolean;
     error?: string;
   }>;
+  loadImageServiceConfigs: () => Promise<{
+    success: boolean;
+    error?: string;
+    data: {
+      imageServices: Array<{
+        id: string;
+        name: string;
+        type: 'unsplash' | 'custom';
+        apiKeys: string[];
+        isDefault?: boolean;
+        isDeletable?: boolean;
+        createdAt?: string;
+        updatedAt?: string;
+      }>;
+      defaultServiceId?: string;
+    };
+  }>;
+  saveImageServiceConfigs: (configs: {
+    imageServices: Array<{
+      id: string;
+      name: string;
+      type: 'unsplash' | 'custom';
+      apiKeys: string[];
+      isDefault?: boolean;
+      isDeletable?: boolean;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    defaultServiceId?: string;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
+  loadSearchServiceConfigs: () => Promise<{
+    success: boolean;
+    error?: string;
+    data: {
+      searchServices: Array<{
+        id: string;
+        name: string;
+        type: 'tavily' | 'custom';
+        apiKeys: string[];
+        isDefault?: boolean;
+        isDeletable?: boolean;
+        createdAt?: string;
+        updatedAt?: string;
+      }>;
+      defaultServiceId?: string;
+    };
+  }>;
+  saveSearchServiceConfigs: (configs: {
+    searchServices: Array<{
+      id: string;
+      name: string;
+      type: 'tavily' | 'custom';
+      apiKeys: string[];
+      isDefault?: boolean;
+      isDeletable?: boolean;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    defaultServiceId?: string;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
 }
 
 interface Window {

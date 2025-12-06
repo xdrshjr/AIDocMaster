@@ -6,11 +6,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Bot, Settings as SettingsIcon, Image as ImageIcon, Cpu } from 'lucide-react';
+import { Bot, Settings as SettingsIcon, Image as ImageIcon, Cpu, Search as SearchIcon } from 'lucide-react';
 import { logger } from '@/lib/logger';
 import ChatBotManager from './ChatBotManager';
 import MCPSettingsPanel from './MCPSettingsPanel';
 import ImageServiceSettingsPanel from './ImageServiceSettingsPanel';
+import SearchServiceSettingsPanel from './SearchServiceSettingsPanel';
 import ModelSettingsPanel from './ModelSettingsPanel';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -20,7 +21,7 @@ interface SettingsContainerProps {
   className?: string;
 }
 
-type SettingsSection = 'model-settings' | 'chat-bots' | 'mcp' | 'image-services';
+type SettingsSection = 'model-settings' | 'chat-bots' | 'mcp' | 'image-services' | 'search-services';
 
 interface SettingsMenuItem {
   id: SettingsSection;
@@ -57,6 +58,11 @@ const SettingsContainer = ({ className }: SettingsContainerProps) => {
       id: 'image-services',
       label: dict.settings.imageServices || 'Image Services',
       icon: <ImageIcon className="w-4 h-4" />,
+    },
+    {
+      id: 'search-services',
+      label: dict.settings.searchServices || 'Search Services',
+      icon: <SearchIcon className="w-4 h-4" />,
     },
   ];
 
@@ -111,6 +117,7 @@ const SettingsContainer = ({ className }: SettingsContainerProps) => {
         {activeSection === 'chat-bots' && <ChatBotManager className="h-full" />}
         {activeSection === 'mcp' && <MCPSettingsPanel className="h-full" />}
         {activeSection === 'image-services' && <ImageServiceSettingsPanel className="h-full" />}
+        {activeSection === 'search-services' && <SearchServiceSettingsPanel className="h-full" />}
       </main>
     </div>
   );

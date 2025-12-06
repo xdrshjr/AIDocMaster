@@ -461,6 +461,7 @@ def chat():
         system_prompt = data.get('systemPrompt')  # Get optional system prompt from request
         mcp_enabled = data.get('mcpEnabled', False)  # Check if MCP is enabled
         mcp_tools = data.get('mcpTools', [])  # Get enabled MCP tools
+        network_search_enabled = data.get('networkSearchEnabled', False)  # Check if network search is enabled
         
         # Debug: Log extracted system prompt
         app.logger.debug('Extracted system prompt from request', extra={
@@ -478,11 +479,17 @@ def chat():
             'mcpTools_preview': [{'name': t.get('name'), 'id': t.get('id')} for t in mcp_tools] if mcp_tools else [],
         })
         
+        # Debug: Log extracted network search data
+        app.logger.debug('Extracted network search configuration from request', extra={
+            'networkSearchEnabled_raw': data.get('networkSearchEnabled'),
+            'networkSearchEnabled_parsed': network_search_enabled,
+        })
+        
         if not messages or not isinstance(messages, list):
             app.logger.warning(f'Invalid messages in chat request: {type(messages)}')
             return jsonify({'error': 'Messages array is required and must not be empty'}), 400
         
-        app.logger.info(f'Processing chat request with {len(messages)} messages, modelId: {model_id or "default"}, MCP: {mcp_enabled}', extra={
+        app.logger.info(f'Processing chat request with {len(messages)} messages, modelId: {model_id or "default"}, MCP: {mcp_enabled}, NetworkSearch: {network_search_enabled}', extra={
             'messageCount': len(messages),
             'requestedModelId': model_id,
             'usingDefaultModel': model_id is None,
@@ -491,6 +498,7 @@ def chat():
             'mcpEnabled': mcp_enabled,
             'mcpToolCount': len(mcp_tools) if mcp_enabled else 0,
             'mcpToolNames': [t.get('name') for t in mcp_tools] if mcp_tools else [],
+            'networkSearchEnabled': network_search_enabled,
         })
         
         # Get and validate LLM configuration with specified model ID
@@ -527,6 +535,9 @@ def chat():
         # Use custom system prompt if provided, otherwise use default
         default_system_prompt = 'You are a helpful AI assistant for EcritisAgent, an AI-powered document editing and validation tool. You help users with document-related questions, provide guidance on using the tool, and assist with document editing tasks. Be concise, friendly, and professional.'
         system_content = system_prompt if system_prompt else default_system_prompt
+        
+        # If network search is enabled, we'll add search results to the last user message
+        # This will be done in the generate() function after search completes
         
         app.logger.info('System message prepared', extra={
             'usingCustomPrompt': bool(system_prompt),
@@ -572,6 +583,147 @@ def chat():
         # Make streaming request to LLM API
         def generate():
             try:
+                # Step 0: If network search is enabled, perform search first
+                network_search_results = []
+                if network_search_enabled:
+                    app.logger.info('[NetworkSearch] Network search enabled, performing search before chat', extra={
+                        'enabled': network_search_enabled,
+                    })
+                    
+                    try:
+                        # Get user's last message as search query
+                        last_user_message = next((m['content'] for m in reversed(messages) if m['role'] == 'user'), '')
+                        
+                        if last_user_message:
+                            app.logger.info('[NetworkSearch] Preparing search query', extra={
+                                'query_preview': last_user_message[:100],
+                            })
+                            
+                            # Send search query event
+                            search_query_event = {
+                                'type': 'network_search_query',
+                                'query': last_user_message,
+                            }
+                            yield f"data: {json.dumps(search_query_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                            
+                            # Send search execution event
+                            search_execution_event = {
+                                'type': 'network_search_execution',
+                                'status': 'running',
+                            }
+                            yield f"data: {json.dumps(search_execution_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                            
+                            # Call search service API
+                            search_api_url = f"{request.scheme}://{request.host}/api/search-services/search"
+                            
+                            app.logger.info('[NetworkSearch] Calling search service API', extra={
+                                'api_url': search_api_url,
+                                'query': last_user_message,
+                            })
+                            
+                            search_response = requests.post(
+                                search_api_url,
+                                json={
+                                    'query': last_user_message,
+                                    'maxResults': 5,
+                                },
+                                timeout=15
+                            )
+                            
+                            if search_response.status_code == 200:
+                                search_data = search_response.json()
+                                if search_data.get('success'):
+                                    network_search_results = search_data.get('results', [])
+                                    
+                                    app.logger.info('[NetworkSearch] Search completed successfully', extra={
+                                        'result_count': len(network_search_results),
+                                    })
+                                    
+                                    # Send search results event
+                                    search_results_event = {
+                                        'type': 'network_search_results',
+                                        'results': network_search_results,
+                                    }
+                                    yield f"data: {json.dumps(search_results_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                                    
+                                    # Send synthesizing event
+                                    synthesizing_event = {
+                                        'type': 'network_search_synthesizing',
+                                    }
+                                    yield f"data: {json.dumps(synthesizing_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                                    
+                                    # Update search execution status to success
+                                    search_execution_success_event = {
+                                        'type': 'network_search_execution',
+                                        'status': 'success',
+                                    }
+                                    yield f"data: {json.dumps(search_execution_success_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                                else:
+                                    app.logger.warning('[NetworkSearch] Search API returned error', extra={
+                                        'error': search_data.get('error'),
+                                    })
+                                    search_execution_error_event = {
+                                        'type': 'network_search_execution',
+                                        'status': 'error',
+                                        'error': search_data.get('error', 'Search failed'),
+                                    }
+                                    yield f"data: {json.dumps(search_execution_error_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                            else:
+                                app.logger.error('[NetworkSearch] Search API request failed', extra={
+                                    'status_code': search_response.status_code,
+                                    'response': search_response.text[:200],
+                                })
+                                search_execution_error_event = {
+                                    'type': 'network_search_execution',
+                                    'status': 'error',
+                                    'error': f'Search API error: {search_response.status_code}',
+                                }
+                                yield f"data: {json.dumps(search_execution_error_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                        else:
+                            app.logger.warning('[NetworkSearch] No user message found for search', extra={})
+                    except Exception as search_error:
+                        app.logger.error('[NetworkSearch] Network search failed', extra={
+                            'error': str(search_error),
+                        }, exc_info=True)
+                        search_execution_error_event = {
+                            'type': 'network_search_execution',
+                            'status': 'error',
+                            'error': f'Search error: {str(search_error)}',
+                        }
+                        yield f"data: {json.dumps(search_execution_error_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                
+                # If network search was performed, add results to the last user message
+                if network_search_results:
+                    app.logger.info('[NetworkSearch] Adding search results to user message', extra={
+                        'result_count': len(network_search_results),
+                    })
+                    
+                    # Format search results for LLM
+                    search_results_text = "\n\n=== 网络搜索结果 ===\n"
+                    for idx, result in enumerate(network_search_results[:5], 1):
+                        search_results_text += f"\n[{idx}] {result.get('title', 'No title')}\n"
+                        search_results_text += f"URL: {result.get('url', '')}\n"
+                        search_results_text += f"内容: {result.get('content', '')[:500]}\n"
+                    
+                    search_results_text += "\n=== 请根据以上搜索结果回答用户的问题 ===\n"
+                    
+                    # Append search results to the last user message
+                    if full_messages and full_messages[-1]['role'] == 'user':
+                        full_messages[-1]['content'] = full_messages[-1]['content'] + "\n\n" + search_results_text
+                        app.logger.debug('[NetworkSearch] Updated last user message with search results', extra={
+                            'original_length': len(full_messages[-1]['content']) - len(search_results_text),
+                            'new_length': len(full_messages[-1]['content']),
+                        })
+                    
+                    # Update payload with modified messages
+                    payload['messages'] = full_messages
+                    
+                    # Send final answer event
+                    final_answer_event = {
+                        'type': 'network_search_final_answer',
+                    }
+                    yield f"data: {json.dumps(final_answer_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                
                 # Step 1: If MCP is enabled, analyze if tools are needed
                 if should_use_mcp:
                     app.logger.info('[MCP] Starting MCP tool analysis with LLM', extra={
@@ -2923,6 +3075,413 @@ def image_service_search():
         return jsonify({
             'success': False,
             'error': 'Failed to search images',
+            'details': str(e)
+        }), 500
+
+
+# Search service configuration endpoints
+@app.route('/api/search-services/configs', methods=['GET', 'POST'])
+def search_service_configs():
+    """
+    Manage search service configurations with persistent storage
+    GET: Retrieve all search service configurations
+    POST: Save search service configurations
+    """
+    if request.method == 'GET':
+        app.logger.info('[SearchService] Search service configurations retrieval requested')
+        
+        try:
+            # Determine configuration file path
+            # Use same config path logic as model configs
+            electron_user_data = os.environ.get('ELECTRON_USER_DATA')
+            
+            if electron_user_data:
+                # Running in Electron - use the userData path provided by Electron
+                config_dir = Path(electron_user_data)
+                app.logger.debug(f'[SearchService] Using Electron userData path for search service configs: {config_dir}')
+            elif getattr(sys, 'frozen', False):
+                # Running as packaged executable (non-Electron)
+                if sys.platform == 'win32':
+                    config_dir = Path(os.environ.get('APPDATA', '')) / 'EcritisAgent'
+                else:
+                    config_dir = Path.home() / '.config' / 'EcritisAgent'
+            else:
+                # Running in development
+                config_dir = Path(__file__).parent.parent / 'userData'
+            
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / 'search-service-configs.json'
+            
+            # Check if file exists
+            if not config_path.exists():
+                app.logger.info('[SearchService] Search service config file does not exist, creating default configuration')
+                
+                # Create default search service configuration with Tavily
+                current_time = datetime.now().isoformat()
+                default_api_keys = [
+                    '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',
+                    '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',
+                ]
+                
+                default_service_id = f'search_service_{datetime.now().timestamp()}'
+                default_config = {
+                    'searchServices': [
+                        {
+                            'id': default_service_id,
+                            'name': 'Tavily Search',
+                            'type': 'tavily',
+                            'apiKeys': default_api_keys,
+                            'isDefault': True,
+                            'isDeletable': False,
+                            'createdAt': current_time,
+                            'updatedAt': current_time
+                        }
+                    ],
+                    'defaultServiceId': default_service_id
+                }
+                
+                # Save default configuration
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(default_config, f, indent=2, ensure_ascii=False)
+                
+                app.logger.info('[SearchService] Default search service configuration created successfully', extra={
+                    'count': len(default_config['searchServices']),
+                    'path': str(config_path)
+                })
+                
+                return jsonify({
+                    'success': True,
+                    'data': default_config,
+                    'count': len(default_config['searchServices']),
+                    'configPath': str(config_path)
+                })
+            
+            # Load existing configuration
+            with open(config_path, 'r', encoding='utf-8') as f:
+                configs = json.load(f)
+            
+            app.logger.info(f'[SearchService] Returning {len(configs.get("searchServices", []))} search service configurations', extra={
+                'total_count': len(configs.get('searchServices', []))
+            })
+            
+            return jsonify({
+                'success': True,
+                'data': configs,
+                'count': len(configs.get('searchServices', [])),
+                'configPath': str(config_path)
+            })
+        
+        except Exception as e:
+            app.logger.error(f'[SearchService] Failed to retrieve search service configurations: {str(e)}', exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': 'Failed to retrieve search service configurations',
+                'details': str(e)
+            }), 500
+    
+    # POST request - save search service configurations
+    app.logger.info('[SearchService] Search service configuration save requested')
+    
+    try:
+        data = request.get_json()
+        
+        if not data:
+            app.logger.warning('[SearchService] No data provided in search service config save request')
+            return jsonify({
+                'success': False,
+                'error': 'Request body is required'
+            }), 400
+        
+        # Validate required fields
+        if 'searchServices' not in data:
+            app.logger.warning('[SearchService] searchServices array missing in request data')
+            return jsonify({
+                'success': False,
+                'error': 'searchServices array is required'
+            }), 400
+        
+        searchServices = data.get('searchServices', [])
+        app.logger.debug(f'[SearchService] Saving {len(searchServices)} search service configurations')
+        
+        # Validate each search service configuration
+        for idx, service in enumerate(searchServices):
+            required_fields = ['id', 'name', 'type', 'apiKeys']
+            missing_fields = [field for field in required_fields if field not in service or (field != 'apiKeys' and not service[field])]
+            
+            if missing_fields:
+                app.logger.warning(f'[SearchService] Service at index {idx} missing required fields: {missing_fields}')
+                return jsonify({
+                    'success': False,
+                    'error': f'Service at index {idx} is missing required fields: {", ".join(missing_fields)}'
+                }), 400
+            
+            if not isinstance(service['apiKeys'], list) or len(service['apiKeys']) == 0:
+                app.logger.warning(f'[SearchService] Service at index {idx} has invalid apiKeys (must be non-empty array)')
+                return jsonify({
+                    'success': False,
+                    'error': f'Service at index {idx} has invalid apiKeys (must be non-empty array)'
+                }), 400
+            
+            # Log service info
+            app.logger.debug(f'[SearchService] Service {idx}: {service.get("name")} (type: {service.get("type")}, apiKeys: {len(service.get("apiKeys", []))})')
+        
+        # Add timestamps if not present
+        current_time = datetime.now().isoformat()
+        for service in searchServices:
+            if 'updatedAt' not in service:
+                service['updatedAt'] = current_time
+            if 'createdAt' not in service:
+                service['createdAt'] = current_time
+        
+        # Determine configuration file path
+        # Use same config path logic as model configs
+        electron_user_data = os.environ.get('ELECTRON_USER_DATA')
+        
+        if electron_user_data:
+            # Running in Electron - use the userData path provided by Electron
+            config_dir = Path(electron_user_data)
+            app.logger.debug(f'[SearchService] Using Electron userData path for search service configs: {config_dir}')
+        elif getattr(sys, 'frozen', False):
+            # Running as packaged executable (non-Electron)
+            if sys.platform == 'win32':
+                config_dir = Path(os.environ.get('APPDATA', '')) / 'EcritisAgent'
+            else:
+                config_dir = Path.home() / '.config' / 'EcritisAgent'
+        else:
+            # Running in development
+            config_dir = Path(__file__).parent.parent / 'userData'
+        
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / 'search-service-configs.json'
+        
+        # Save to file
+        config_data = {
+            'searchServices': searchServices,
+            'defaultServiceId': data.get('defaultServiceId')
+        }
+        
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
+        
+        app.logger.info(f'[SearchService] Search service configurations saved successfully: {len(searchServices)} services', extra={
+            'count': len(searchServices),
+            'path': str(config_path)
+        })
+        
+        return jsonify({
+            'success': True,
+            'message': 'Search service configurations saved successfully',
+            'count': len(searchServices),
+            'configPath': str(config_path)
+        })
+    
+    except Exception as e:
+        app.logger.error(f'[SearchService] Failed to save search service configurations: {str(e)}', exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to save search service configurations',
+            'details': str(e)
+        }), 500
+
+
+# Search endpoint
+@app.route('/api/search-services/search', methods=['POST'])
+def search_service_search():
+    """
+    Search using configured search services (e.g., Tavily)
+    
+    POST body:
+        - query: Search query string
+        - maxResults: Number of results to return (default: 5)
+        - serviceId: Optional service ID to use (default: uses default service)
+    """
+    start_time = datetime.now()
+    app.logger.info('[SearchService] Search request received')
+    
+    try:
+        data = request.get_json() or {}
+        search_query = data.get('query', '')
+        max_results = data.get('maxResults', 5)
+        service_id = data.get('serviceId')
+        
+        if not search_query or not isinstance(search_query, str) or not search_query.strip():
+            app.logger.warning('[SearchService] Invalid search query in request')
+            return jsonify({
+                'success': False,
+                'error': 'Search query is required and must be a non-empty string'
+            }), 400
+        
+        # Validate max_results
+        try:
+            max_results = int(max_results)
+            if max_results < 1 or max_results > 20:
+                max_results = 5
+        except (ValueError, TypeError):
+            max_results = 5
+        
+        app.logger.info(f'[SearchService] Processing search request', extra={
+            'query': search_query,
+            'maxResults': max_results,
+            'serviceId': service_id or 'default'
+        })
+        
+        # Load search service configurations
+        electron_user_data = os.environ.get('ELECTRON_USER_DATA')
+        
+        if electron_user_data:
+            config_dir = Path(electron_user_data)
+        elif getattr(sys, 'frozen', False):
+            if sys.platform == 'win32':
+                config_dir = Path(os.environ.get('APPDATA', '')) / 'EcritisAgent'
+            else:
+                config_dir = Path.home() / '.config' / 'EcritisAgent'
+        else:
+            config_dir = Path(__file__).parent.parent / 'userData'
+        
+        config_path = config_dir / 'search-service-configs.json'
+        
+        if not config_path.exists():
+            app.logger.warning('[SearchService] Search service config file not found')
+            return jsonify({
+                'success': False,
+                'error': 'Search service configuration not found. Please configure search services in settings.'
+            }), 404
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            configs = json.load(f)
+        
+        # Find the service to use
+        services = configs.get('searchServices', [])
+        if not services:
+            app.logger.warning('[SearchService] No search services configured')
+            return jsonify({
+                'success': False,
+                'error': 'No search services configured. Please configure search services in settings.'
+            }), 404
+        
+        # Select service
+        selected_service = None
+        if service_id:
+            selected_service = next((s for s in services if s.get('id') == service_id), None)
+            if not selected_service:
+                app.logger.warning(f'[SearchService] Service {service_id} not found, using default')
+        
+        if not selected_service:
+            # Use default service
+            default_service_id = configs.get('defaultServiceId')
+            if default_service_id:
+                selected_service = next((s for s in services if s.get('id') == default_service_id), None)
+            
+            if not selected_service:
+                # Use first service
+                selected_service = services[0]
+        
+        app.logger.info(f'[SearchService] Using search service', extra={
+            'serviceId': selected_service.get('id'),
+            'serviceName': selected_service.get('name'),
+            'serviceType': selected_service.get('type'),
+            'apiKeyCount': len(selected_service.get('apiKeys', []))
+        })
+        
+        # Get API keys
+        api_keys = selected_service.get('apiKeys', [])
+        if not api_keys:
+            app.logger.error('[SearchService] No API keys available for service')
+            return jsonify({
+                'success': False,
+                'error': 'No API keys configured for the selected search service'
+            }), 500
+        
+        # Select random API key
+        import random
+        selected_api_key = random.choice(api_keys)
+        
+        app.logger.debug(f'[SearchService] Selected API key (index: {api_keys.index(selected_api_key)}/{len(api_keys)})')
+        
+        # Search based on service type
+        service_type = selected_service.get('type', 'tavily')
+        
+        if service_type == 'tavily':
+            # Search Tavily API
+            tavily_api_url = 'https://api.tavily.com/search'
+            
+            search_payload = {
+                'api_key': selected_api_key,
+                'query': search_query.strip(),
+                'max_results': max_results,
+                'search_depth': 'basic'
+            }
+            
+            app.logger.debug(f'[SearchService] Calling Tavily API', extra={
+                'url': tavily_api_url,
+                'query': search_query,
+                'maxResults': max_results
+            })
+            
+            response = requests.post(tavily_api_url, json=search_payload, timeout=15)
+            
+            if response.status_code != 200:
+                error_text = response.text
+                app.logger.error(f'[SearchService] Tavily API error: {response.status_code} - {error_text}')
+                return jsonify({
+                    'success': False,
+                    'error': f'Tavily API error: {response.status_code}',
+                    'details': error_text
+                }), response.status_code
+            
+            result_data = response.json()
+            results = result_data.get('results', [])
+            
+            app.logger.info(f'[SearchService] Tavily search completed', extra={
+                'query': search_query,
+                'resultCount': len(results)
+            })
+            
+            # Format results
+            formatted_results = []
+            for idx, result in enumerate(results):
+                formatted_result = {
+                    'title': result.get('title', 'No title'),
+                    'url': result.get('url', ''),
+                    'content': result.get('content', ''),
+                    'score': result.get('score', 0.0),
+                }
+                formatted_results.append(formatted_result)
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            app.logger.info(f'[SearchService] Search completed in {duration:.2f}s', extra={
+                'query': search_query,
+                'resultCount': len(formatted_results),
+                'service': selected_service.get('name')
+            })
+            
+            return jsonify({
+                'success': True,
+                'results': formatted_results,
+                'count': len(formatted_results),
+                'query': search_query,
+                'service': selected_service.get('name')
+            })
+        else:
+            app.logger.warning(f'[SearchService] Unsupported service type: {service_type}')
+            return jsonify({
+                'success': False,
+                'error': f'Unsupported search service type: {service_type}'
+            }), 400
+    
+    except requests.Timeout:
+        app.logger.error('[SearchService] Search request timed out')
+        return jsonify({
+            'success': False,
+            'error': 'Request timed out'
+        }), 504
+    
+    except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds()
+        app.logger.error(f'[SearchService] Search request failed after {duration:.2f}s: {str(e)}', exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': 'Failed to perform search',
             'details': str(e)
         }), 500
 
