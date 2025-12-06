@@ -426,60 +426,10 @@ config_loader = ConfigLoader()
 # Store config_loader in app.config for domain routes to access
 app.config['config_loader'] = config_loader
 
-# Health check endpoint
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    app.logger.debug('Health check requested')
-    return jsonify({
-        'status': 'ok',
-        'service': 'EcritisAgent Flask Backend',
-        'timestamp': datetime.utcnow().isoformat(),
-        'log_file': str(log_file_path)
-    })
-
+# Health check endpoint - migrated to domains/system/routes.py
+# Get log file content endpoint - migrated to domains/system/routes.py
 # Chat completion endpoint - migrated to domains/chat/routes.py
 # Document validation endpoint - migrated to domains/document/routes.py
-
-# Get log file content endpoint
-@app.route('/api/logs', methods=['GET'])
-def get_logs():
-    """
-    Return recent log file content
-    Useful for debugging and monitoring
-    """
-    app.logger.debug('Log file content requested')
-    
-    try:
-        lines = request.args.get('lines', 100, type=int)
-        
-        if not log_file_path.exists():
-            app.logger.warning('Log file does not exist')
-            return jsonify({
-                'error': 'Log file not found',
-                'path': str(log_file_path)
-            }), 404
-        
-        # Read last N lines from log file
-        with open(log_file_path, 'r', encoding='utf-8') as f:
-            all_lines = f.readlines()
-            recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        
-        app.logger.info(f'Returning {len(recent_lines)} log lines')
-        
-        return jsonify({
-            'log_file': str(log_file_path),
-            'total_lines': len(all_lines),
-            'returned_lines': len(recent_lines),
-            'content': ''.join(recent_lines)
-        })
-    
-    except Exception as e:
-        app.logger.error(f'Failed to read log file: {str(e)}', exc_info=True)
-        return jsonify({
-            'error': 'Failed to read log file',
-            'details': str(e)
-        }), 500
 
 # Model configuration endpoints - migrated to domains/model/routes.py
 # Agent-based document validation endpoint - migrated to domains/agent/routes.py

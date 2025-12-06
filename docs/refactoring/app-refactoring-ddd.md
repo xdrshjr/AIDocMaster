@@ -122,7 +122,7 @@ backend/
 - 路由处理函数已定义，但实现仍保留在 `app.py` 中
 - 路由处理函数目前返回 `501 Not Implemented`，表示实现待迁移
 
-### 阶段2: 具体实现迁移 ⏳ (进行中)
+### 阶段2: 具体实现迁移 ✅ (已完成)
 
 **计划内容**:
 - [x] 将 `app.py` 中的 `/api/chat` 实现迁移到 `domains/chat/routes.py` ✅ (已完成)
@@ -138,8 +138,8 @@ backend/
 - [x] 将 `app.py` 中的 `/api/image-services/search` 实现迁移到 `domains/image_service/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/search-services/configs` 实现迁移到 `domains/search_service/routes.py` ✅ (已完成)
 - [x] 将 `app.py` 中的 `/api/search-services/search` 实现迁移到 `domains/search_service/routes.py` ✅ (已完成)
-- [ ] 将 `app.py` 中的 `/health` 实现迁移到 `domains/system/routes.py`
-- [ ] 将 `app.py` 中的 `/api/logs` 实现迁移到 `domains/system/routes.py`
+- [x] 将 `app.py` 中的 `/health` 实现迁移到 `domains/system/routes.py` ✅ (已完成)
+- [x] 将 `app.py` 中的 `/api/logs` 实现迁移到 `domains/system/routes.py` ✅ (已完成)
 
 **迁移注意事项**:
 1. 保持原有功能完全一致，不改变任何业务逻辑
@@ -368,6 +368,34 @@ backend/
 - ✅ 搜索服务配置验证逻辑完整
 - ✅ Tavily API 集成正常工作
 
+#### System Domain 迁移详情 ✅
+
+**完成时间**: 2024-12-19
+
+**迁移内容**:
+- ✅ 将 `/health` 路由的完整实现迁移到 `domains/system/routes.py`
+- ✅ 将 `/api/logs` 路由的完整实现迁移到 `domains/system/routes.py`
+- ✅ 实现了健康检查功能（返回服务状态、时间戳和日志文件路径）
+- ✅ 实现了日志查看功能（支持指定行数，返回最近的日志内容）
+- ✅ 实现了独立的日志文件路径处理函数 `_get_log_file_path()`，支持打包和开发环境
+- ✅ 从 `app.py` 中删除了已迁移的路由定义
+- ✅ 使用模块级别的 logger，所有日志都添加了 `[System Domain]` 前缀以便识别
+
+**技术实现**:
+- 使用 Flask Blueprint 组织路由（注意：`/health` 路由没有 url_prefix，直接注册在根路径）
+- 实现了独立的日志文件路径处理逻辑，支持打包和开发环境
+- 保持了所有原有的业务逻辑和错误处理
+- 日志记录保持详细，使用 `info`、`debug`、`warning`、`error` 等不同级别
+- 所有日志消息都添加了 `[System Domain]` 前缀，便于日志过滤和追踪
+- 实现了完整的错误处理机制，包括文件不存在、读取失败等异常情况
+
+**验证要点**:
+- ✅ 路由已从 `app.py` 中移除
+- ✅ 功能实现完整，包括健康检查和日志查看
+- ✅ 日志记录完整且分级合理
+- ✅ 错误处理机制保持一致
+- ✅ 日志文件路径处理逻辑正确，支持不同环境
+
 ### 阶段3: 共享服务提取 ⏳ (待进行)
 
 **计划内容**:
@@ -457,4 +485,5 @@ logger.error('[Domain Name] Error message', exc_info=True)
 - **2024-12-19**: 完成 MCP Domain 的迁移（阶段2的第五个领域）
 - **2024-12-19**: 完成 Image Service Domain 的迁移（阶段2的第六个领域）
 - **2024-12-19**: 完成 Search Service Domain 的迁移（阶段2的第七个领域）
+- **2024-12-19**: 完成 System Domain 的迁移（阶段2的第八个领域，阶段2全部完成）
 
