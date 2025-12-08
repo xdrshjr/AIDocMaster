@@ -34,6 +34,7 @@ interface SerializedMessage {
   timestamp: string;
   isCleared?: boolean;
   mcpExecutionSteps?: unknown[];
+  networkSearchExecutionSteps?: unknown[];
 }
 
 interface SerializedAIChatState {
@@ -73,17 +74,47 @@ const serializeAIChatState = (state: AIChatState): SerializedAIChatState => {
   }));
 
   const messagesByConversationId: Record<string, SerializedMessage[]> = {};
+  let totalNetworkSearchSteps = 0;
+  let messagesWithNetworkSearch = 0;
 
   messagesMap.forEach((messages, conversationId) => {
-    messagesByConversationId[conversationId] = messages.map((msg) => ({
-      id: msg.id,
-      role: msg.role,
-      content: msg.content,
-      timestamp: msg.timestamp.toISOString(),
-      isCleared: msg.isCleared,
-      mcpExecutionSteps: msg.mcpExecutionSteps,
-    }));
+    messagesByConversationId[conversationId] = messages.map((msg) => {
+      const serialized: SerializedMessage = {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp.toISOString(),
+        isCleared: msg.isCleared,
+        mcpExecutionSteps: msg.mcpExecutionSteps,
+        networkSearchExecutionSteps: msg.networkSearchExecutionSteps,
+      };
+      
+      // Count network search steps for statistics
+      if (msg.networkSearchExecutionSteps && msg.networkSearchExecutionSteps.length > 0) {
+        totalNetworkSearchSteps += msg.networkSearchExecutionSteps.length;
+        messagesWithNetworkSearch++;
+        
+        logger.debug('Serializing message with network search execution steps', {
+          messageId: msg.id,
+          conversationId,
+          networkSearchStepsCount: msg.networkSearchExecutionSteps.length,
+          stepTypes: msg.networkSearchExecutionSteps.map((step: any) => step.type),
+        }, 'AIChatStorage');
+      }
+      
+      return serialized;
+    });
   });
+
+  // Log summary statistics
+  if (messagesWithNetworkSearch > 0) {
+    logger.info('Serializing AI Chat state with network search steps', {
+      totalMessages: Array.from(messagesMap.values()).flat().length,
+      messagesWithNetworkSearch,
+      totalNetworkSearchSteps,
+      conversations: conversations.length,
+    }, 'AIChatStorage');
+  }
 
   return {
     version: 1,
@@ -105,17 +136,48 @@ const deserializeAIChatState = (serialized: SerializedAIChatState): AIChatState 
 
   const messagesMap = new Map<string, Message[]>();
 
+  let totalNetworkSearchSteps = 0;
+  let messagesWithNetworkSearch = 0;
+
   Object.entries(serialized.messagesByConversationId).forEach(([conversationId, serializedMessages]) => {
-    const messages: Message[] = serializedMessages.map((msg) => ({
-      id: msg.id,
-      role: msg.role,
-      content: msg.content,
-      timestamp: new Date(msg.timestamp),
-      isCleared: msg.isCleared,
-      mcpExecutionSteps: msg.mcpExecutionSteps,
-    }));
+    const messages: Message[] = serializedMessages.map((msg) => {
+      const deserialized: Message = {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: new Date(msg.timestamp),
+        isCleared: msg.isCleared,
+        mcpExecutionSteps: msg.mcpExecutionSteps,
+        networkSearchExecutionSteps: msg.networkSearchExecutionSteps,
+      };
+      
+      // Count and log network search steps deserialization for debugging
+      if (msg.networkSearchExecutionSteps && msg.networkSearchExecutionSteps.length > 0) {
+        totalNetworkSearchSteps += msg.networkSearchExecutionSteps.length;
+        messagesWithNetworkSearch++;
+        
+        logger.debug('Deserializing message with network search execution steps', {
+          messageId: msg.id,
+          conversationId,
+          networkSearchStepsCount: msg.networkSearchExecutionSteps.length,
+          stepTypes: (msg.networkSearchExecutionSteps as any[]).map((step: any) => step?.type).filter(Boolean),
+        }, 'AIChatStorage');
+      }
+      
+      return deserialized;
+    });
     messagesMap.set(conversationId, messages);
   });
+
+  // Log summary statistics
+  if (messagesWithNetworkSearch > 0) {
+    logger.info('Deserialized AI Chat state with network search steps', {
+      totalMessages: Object.values(serialized.messagesByConversationId).flat().length,
+      messagesWithNetworkSearch,
+      totalNetworkSearchSteps,
+      conversations: conversations.length,
+    }, 'AIChatStorage');
+  }
 
   return {
     conversations,

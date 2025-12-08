@@ -204,6 +204,8 @@ const en = {
     noAgentsAvailable: 'No agents available',
     retry: 'Retry',
     createConversation: 'Create',
+    expandSearchResults: 'Expand search results',
+    collapseSearchResults: 'Collapse search results',
   },
   settings: {
     title: 'Settings',
@@ -515,6 +517,8 @@ const zh = {
     noAgentsAvailable: '没有可用的Agent',
     retry: '重试',
     createConversation: '创建',
+    expandSearchResults: '展开搜索结果',
+    collapseSearchResults: '折叠搜索结果',
   },
   settings: {
     title: '设置',
