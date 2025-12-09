@@ -33,6 +33,7 @@ import {
   Redo,
   Upload,
   Image as ImageIcon,
+  Download,
 } from 'lucide-react';
 import ImageInsertDialog from './ImageInsertDialog';
 import ImageEditorPanel from './ImageEditorPanel';
@@ -44,6 +45,7 @@ import { getDictionary } from '@/lib/i18n/dictionaries';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { extractParagraphsFromHTML, paragraphsToHTML, updateParagraph, type DocumentParagraph } from '@/lib/documentUtils';
 import { processText, checkText, type TextProcessingType } from '@/lib/textProcessingApi';
+import { exportToWord } from '@/lib/wordExport';
 // @ts-expect-error - mammoth types may not be fully available
 import mammoth from 'mammoth/mammoth.browser';
 
@@ -93,6 +95,7 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingType, setProcessingType] = useState<TextProcessingType | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   
   // Text processing comparison state (for rewrite and polish)
   const [textComparison, setTextComparison] = useState<{
@@ -1231,6 +1234,61 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     setIsImageDialogOpen(false);
   }, []);
 
+  const handleExport = useCallback(async () => {
+    if (!editor || isExporting) {
+      logger.debug('Export skipped', {
+        hasEditor: !!editor,
+        isExporting,
+      }, 'WordEditorPanel');
+      return;
+    }
+
+    logger.info('Export button clicked, starting Word export', undefined, 'WordEditorPanel');
+    setIsExporting(true);
+
+    try {
+      const html = editor.getHTML();
+      
+      if (!html || html.trim().length === 0) {
+        logger.warn('No content to export', undefined, 'WordEditorPanel');
+        alert(locale === 'zh' ? '没有内容可导出。请先编辑文档。' : 'No content to export. Please edit the document first.');
+        return;
+      }
+
+      logger.debug('Preparing export', {
+        htmlLength: html.length,
+        fileName: fileName || 'document',
+      }, 'WordEditorPanel');
+
+      // Generate export filename
+      const exportFileName = fileName
+        ? fileName.replace(/\.(doc|docx)$/i, '') + '-exported.docx'
+        : `document-${Date.now()}.docx`;
+
+      // Export to Word
+      await exportToWord(html, {
+        fileName: exportFileName,
+      });
+
+      logger.success('Word export completed successfully', {
+        fileName: exportFileName,
+      }, 'WordEditorPanel');
+    } catch (error) {
+      logger.error('Failed to export Word document', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+      }, 'WordEditorPanel');
+      
+      alert(
+        locale === 'zh'
+          ? '导出失败：' + (error instanceof Error ? error.message : '未知错误')
+          : 'Export failed: ' + (error instanceof Error ? error.message : 'Unknown error')
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }, [editor, isExporting, fileName, locale]);
+
   // Text processing handlers
   const handlePolish = useCallback(async () => {
     if (!editor || !textSelection || isProcessing) {
@@ -1794,6 +1852,22 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
               </select>
             </>
           )}
+
+          {/* Export Button - Rightmost position */}
+          <div className="flex-1" />
+          <div className="w-px h-6 bg-border mx-2" />
+          <button
+            onClick={handleExport}
+            disabled={isExporting || !editor}
+            className="px-3 py-2 bg-primary text-primary-foreground border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            aria-label={dict.docValidation.editorToolbar.export}
+            title={dict.docValidation.editorToolbar.export}
+          >
+            <Download className="w-4 h-4" />
+            <span className="text-sm font-medium">
+              {isExporting ? (locale === 'zh' ? '导出中...' : 'Exporting...') : dict.docValidation.editorToolbar.export}
+            </span>
+          </button>
         </div>
 
         {/* File Name Display */}

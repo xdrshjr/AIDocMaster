@@ -138,6 +138,7 @@ const en = {
       undo: 'Undo',
       redo: 'Redo',
       insertImage: 'Insert Image',
+      export: 'Export',
     },
     imageInsert: {
       title: 'Insert Image',
@@ -452,6 +453,7 @@ const zh = {
       undo: '撤销',
       redo: '重做',
       insertImage: '插入图片',
+      export: '导出',
     },
     imageInsert: {
       title: '插入图片',
