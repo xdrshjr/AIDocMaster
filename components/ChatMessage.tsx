@@ -424,11 +424,11 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
             </div>
           )}
           {isUser ? (
-            <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+            <div className="text-sm leading-relaxed whitespace-pre-wrap break-words px-1 py-1 chat-message-user-content">
               {content}
             </div>
           ) : (
-            <div className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert prose-pre:bg-[#0d1117] prose-pre:text-gray-100 prose-code:text-pink-500 prose-code:before:content-[''] prose-code:after:content-['']">
+            <div className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert prose-pre:bg-[#0d1117] prose-pre:text-gray-100 prose-code:text-pink-500 prose-code:before:content-[''] prose-code:after:content-[''] px-3 py-2 chat-message-content-wrapper">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
@@ -463,8 +463,8 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
                     }, 'ChatMessage');
 
                     return (
-                      <div className="relative group/codeblock my-2">
-                        <pre className="bg-[#0d1117] rounded-md p-4 overflow-x-auto">
+                      <div className="relative group/codeblock my-1">
+                        <pre className="bg-[#0d1117] rounded-md p-2 overflow-x-auto">
                           <code className={className} {...props}>
                             {children}
                           </code>
@@ -507,12 +507,12 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
                   ),
                   // Custom rendering for lists
                   ul: ({ node, children, ...props }) => (
-                    <ul className="list-disc list-inside mb-2 space-y-1" {...props}>
+                    <ul className="list-disc list-outside mb-2 space-y-1 pl-5" {...props}>
                       {children}
                     </ul>
                   ),
                   ol: ({ node, children, ...props }) => (
-                    <ol className="list-decimal list-inside mb-2 space-y-1" {...props}>
+                    <ol className="list-decimal list-outside mb-2 space-y-1 pl-5" {...props}>
                       {children}
                     </ol>
                   ),

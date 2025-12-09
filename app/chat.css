@@ -256,9 +256,9 @@ textarea {
 .prose pre {
   background-color: #0d1117;
   border-radius: 6px;
-  padding: 1em;
+  padding: 0.5em;
   overflow-x: auto;
-  margin: 0.5em 0;
+  margin: 0.25em 0;
 }
 
 .prose pre code {
@@ -422,5 +422,20 @@ textarea {
 /* ChatBotManager padding fix - ensure padding is not overridden by global reset */
 .chat-bot-manager-container {
   padding: 0.5rem !important; /* 8px - same as ChatPanel for consistency */
+}
+
+/* Chat message content padding fix - ensure content has proper spacing from bubble edges */
+.chat-message-content-wrapper {
+  padding: 0.5rem 0.75rem !important; /* 8px vertical, 12px horizontal */
+}
+
+/* Ensure prose content in AI messages has proper padding */
+.prose.prose-sm {
+  padding: 0.5rem 0.75rem !important; /* 8px vertical, 12px horizontal */
+}
+
+/* Ensure user message content has proper padding */
+.chat-message-user-content {
+  padding: 0.25rem 0.25rem !important; /* 4px padding for user messages */
 }
 
