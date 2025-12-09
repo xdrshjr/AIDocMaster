@@ -37,6 +37,7 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
   const [isTranslating, setIsTranslating] = useState(false);
   const [hasTranslation, setHasTranslation] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [codeBlockCopyStates, setCodeBlockCopyStates] = useState<Record<string, boolean>>({});
 
   const handleFormatTimestamp = (date: Date): string => {
     const now = new Date();
@@ -268,6 +269,68 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
     }
   };
 
+  /**
+   * Extract text content from React children (code block content)
+   */
+  const extractCodeText = (children: React.ReactNode): string => {
+    if (typeof children === 'string') {
+      return children;
+    }
+    if (typeof children === 'number') {
+      return String(children);
+    }
+    if (Array.isArray(children)) {
+      return children.map(child => extractCodeText(child)).join('');
+    }
+    if (children && typeof children === 'object' && 'props' in children) {
+      return extractCodeText((children as any).props?.children || '');
+    }
+    return '';
+  };
+
+  /**
+   * Handle copying code block content to clipboard
+   */
+  const handleCopyCodeBlock = async (codeText: string, codeBlockId: string, language?: string) => {
+    logger.info('Starting code block copy', {
+      codeBlockId,
+      codeLength: codeText.length,
+      language: language || 'unknown',
+    }, 'ChatMessage');
+
+    try {
+      await navigator.clipboard.writeText(codeText);
+      logger.success('Code block copied to clipboard', {
+        codeBlockId,
+        codeLength: codeText.length,
+        language: language || 'unknown',
+      }, 'ChatMessage');
+
+      // Set success state for this specific code block
+      setCodeBlockCopyStates(prev => ({ ...prev, [codeBlockId]: true }));
+      
+      // Reset success state after 2 seconds
+      setTimeout(() => {
+        setCodeBlockCopyStates(prev => {
+          const newState = { ...prev };
+          delete newState[codeBlockId];
+          return newState;
+        });
+        logger.debug('Code block copy success state reset', {
+          codeBlockId,
+        }, 'ChatMessage');
+      }, 2000);
+    } catch (error) {
+      logger.error('Failed to copy code block', {
+        codeBlockId,
+        codeLength: codeText.length,
+        language: language || 'unknown',
+        error: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
+      }, 'ChatMessage');
+    }
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent, handler: () => void) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -373,14 +436,56 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
                   // Custom rendering for code blocks
                   code: ({ node, inline, className, children, ...props }: any) => {
                     const match = /language-(\w+)/.exec(className || '');
-                    return !inline ? (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    ) : (
-                      <code className="bg-muted/60 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
-                        {children}
-                      </code>
+                    const language = match ? match[1] : undefined;
+                    
+                    if (inline) {
+                      return (
+                        <code className="bg-muted/60 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
+                          {children}
+                        </code>
+                      );
+                    }
+
+                    // Block code - add copy button
+                    const codeText = extractCodeText(children);
+                    // Generate unique ID for this code block
+                    // Use content hash + timestamp + random to ensure uniqueness
+                    const contentHash = codeText.length > 0 
+                      ? `${codeText.substring(0, 10).replace(/\s/g, '')}-${codeText.length}`
+                      : 'empty';
+                    const codeBlockId = `code-block-${contentHash}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+                    const isCopied = codeBlockCopyStates[codeBlockId] || false;
+
+                    logger.debug('Rendering code block', {
+                      codeBlockId,
+                      codeLength: codeText.length,
+                      language: language || 'unknown',
+                    }, 'ChatMessage');
+
+                    return (
+                      <div className="relative group/codeblock my-2">
+                        <pre className="bg-[#0d1117] rounded-md p-4 overflow-x-auto">
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        </pre>
+                        <button
+                          onClick={() => handleCopyCodeBlock(codeText, codeBlockId, language)}
+                          onKeyDown={(e) => handleKeyDown(e, () => handleCopyCodeBlock(codeText, codeBlockId, language))}
+                          className={`absolute bottom-2 right-2 p-1.5 rounded-md transition-all duration-200 opacity-0 group-hover/codeblock:opacity-100 hover:bg-muted/90 text-muted-foreground/80 hover:text-foreground bg-background/80 backdrop-blur-sm border border-border/30 ${
+                            isCopied ? 'bg-green-500/20 opacity-100' : ''
+                          } shadow-sm hover:shadow-md z-10`}
+                          aria-label="Copy code block"
+                          tabIndex={0}
+                          title={isCopied ? 'Copied!' : 'Copy code block'}
+                        >
+                          {isCopied ? (
+                            <span className="text-xs font-semibold">✓</span>
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     );
                   },
                   // Custom rendering for links
