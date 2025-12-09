@@ -18,6 +18,12 @@ from __future__ import annotations
 
 import logging
 import operator
+import json
+import os
+import sys
+import random
+import requests
+from pathlib import Path
 from typing import Annotated, Dict, Generator, List, Optional, TypedDict
 
 from langchain_core.messages import SystemMessage
@@ -264,6 +270,252 @@ def create_writer_workflow() -> StateGraph:
     return workflow.compile()
 
 
+def _get_image_service_config_path():
+    """
+    Determine image service configuration file path based on environment
+    Returns the path to image-service-configs.json
+    """
+    electron_user_data = os.environ.get('ELECTRON_USER_DATA')
+    
+    if electron_user_data:
+        # Running in Electron - use the userData path provided by Electron
+        config_dir = Path(electron_user_data)
+        logger.debug('[AutoWriter] Using Electron userData path for image service configs', extra={
+            'path': str(config_dir)
+        })
+    elif getattr(sys, 'frozen', False):
+        # Running as packaged executable (non-Electron)
+        if sys.platform == 'win32':
+            config_dir = Path(os.environ.get('APPDATA', '')) / 'EcritisAgent'
+        else:
+            config_dir = Path.home() / '.config' / 'EcritisAgent'
+        logger.debug('[AutoWriter] Using packaged app config path for image service configs', extra={
+            'path': str(config_dir)
+        })
+    else:
+        # Running in development
+        config_dir = Path(__file__).parent.parent.parent / 'userData'
+        logger.debug('[AutoWriter] Using development config path for image service configs', extra={
+            'path': str(config_dir)
+        })
+    
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / 'image-service-configs.json'
+
+
+def _extract_keywords_from_paragraph(
+    paragraph_content: str,
+    section_title: str,
+    llm: ChatOpenAI
+) -> List[str]:
+    """
+    Extract 3 keywords from paragraph content using LLM.
+    
+    Args:
+        paragraph_content: The paragraph content to extract keywords from
+        section_title: The title of the section
+        llm: LLM instance for keyword extraction
+        
+    Returns:
+        List of 3 keywords (strings)
+    """
+    logger.info('[AutoWriter] Extracting keywords from paragraph', extra={
+        'section_title': section_title,
+        'content_length': len(paragraph_content),
+    })
+    
+    try:
+        prompt = SystemMessage(
+            content=(
+                f"你是一名专业的关键词提取专家。请从以下段落中提取3个最重要的关键词。\n\n"
+                f"段落标题：{section_title}\n\n"
+                f"段落内容：\n{paragraph_content}\n\n"
+                f"要求：\n"
+                f"- 提取3个关键词，这些关键词应该最能代表段落的核心内容\n"
+                f"- 关键词应该适合用于图片搜索\n"
+                f"- 关键词应该简洁、具体、有代表性\n"
+                f"- 输出格式为JSON数组，例如：[\"关键词1\", \"关键词2\", \"关键词3\"]\n"
+                f"- 只输出JSON数组，不要添加任何其他说明或文字\n"
+            )
+        )
+        
+        logger.debug('[AutoWriter] Calling LLM for keyword extraction', extra={
+            'section_title': section_title,
+        })
+        
+        response = llm.invoke([prompt])
+        response_text = response.content.strip() if hasattr(response, "content") else str(response).strip()
+        
+        # Parse JSON response
+        keywords = parse_json_block(response_text)
+        
+        if isinstance(keywords, list) and len(keywords) >= 1:
+            # Take first 3 keywords
+            extracted_keywords = [str(k).strip() for k in keywords[:3] if k and str(k).strip()]
+            
+            # Ensure we have at least 3 keywords (pad if needed)
+            while len(extracted_keywords) < 3 and len(extracted_keywords) > 0:
+                # Use the first keyword as fallback
+                extracted_keywords.append(extracted_keywords[0])
+            
+            if len(extracted_keywords) >= 3:
+                logger.info('[AutoWriter] Keywords extracted successfully', extra={
+                    'section_title': section_title,
+                    'keywords': extracted_keywords[:3],
+                })
+                return extracted_keywords[:3]
+            else:
+                logger.warning('[AutoWriter] Insufficient keywords extracted, using fallback', extra={
+                    'section_title': section_title,
+                    'extracted_count': len(extracted_keywords),
+                })
+                # Fallback: use section title and first few words from content
+                fallback_keywords = [
+                    section_title,
+                    paragraph_content.split()[0] if paragraph_content.split() else "image",
+                    "illustration"
+                ]
+                return fallback_keywords[:3]
+        else:
+            logger.warning('[AutoWriter] Invalid keyword extraction response format', extra={
+                'section_title': section_title,
+                'response_preview': response_text[:100],
+            })
+            # Fallback keywords
+            return [section_title, "image", "illustration"]
+            
+    except Exception as error:
+        logger.error('[AutoWriter] Failed to extract keywords', extra={
+            'section_title': section_title,
+            'error': str(error),
+        }, exc_info=True)
+        # Fallback keywords
+        return [section_title, "image", "illustration"]
+
+
+def _search_image_for_keywords(keywords: List[str]) -> Optional[Dict[str, str]]:
+    """
+    Search for an image using keywords via the configured image service.
+    
+    Args:
+        keywords: List of keywords to search for
+        
+    Returns:
+        Dictionary with image info (url, description, etc.) or None if search fails
+    """
+    logger.info('[AutoWriter] Searching image with keywords', extra={
+        'keywords': keywords,
+    })
+    
+    try:
+        # Load image service configuration
+        config_path = _get_image_service_config_path()
+        
+        if not config_path.exists():
+            logger.warning('[AutoWriter] Image service config file not found')
+            return None
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            configs = json.load(f)
+        
+        services = configs.get('imageServices', [])
+        if not services:
+            logger.warning('[AutoWriter] No image services configured')
+            return None
+        
+        # Select default service
+        selected_service = None
+        default_service_id = configs.get('defaultServiceId')
+        if default_service_id:
+            selected_service = next((s for s in services if s.get('id') == default_service_id), None)
+        
+        if not selected_service:
+            selected_service = services[0]
+        
+        logger.info('[AutoWriter] Using image service', extra={
+            'serviceId': selected_service.get('id'),
+            'serviceName': selected_service.get('name'),
+            'serviceType': selected_service.get('type'),
+        })
+        
+        # Get API keys
+        api_keys = selected_service.get('apiKeys', [])
+        if not api_keys:
+            logger.error('[AutoWriter] No API keys available for image service')
+            return None
+        
+        # Select random API key
+        selected_api_key = random.choice(api_keys)
+        
+        # Build search query from keywords
+        search_query = " ".join(keywords)
+        
+        # Search based on service type
+        service_type = selected_service.get('type', 'unsplash')
+        
+        if service_type == 'unsplash':
+            # Search Unsplash API
+            unsplash_api_url = 'https://api.unsplash.com/search/photos'
+            
+            search_params = {
+                'query': search_query.strip(),
+                'per_page': 1,  # Only need one image
+                'page': 1,
+                'client_id': selected_api_key
+            }
+            
+            logger.debug('[AutoWriter] Calling Unsplash API', extra={
+                'query': search_query,
+            })
+            
+            response = requests.get(unsplash_api_url, params=search_params, timeout=10)
+            
+            if response.status_code != 200:
+                logger.error('[AutoWriter] Unsplash API error', extra={
+                    'status_code': response.status_code,
+                    'error_text': response.text[:200],
+                })
+                return None
+            
+            result_data = response.json()
+            results = result_data.get('results', [])
+            
+            if not results:
+                logger.warning('[AutoWriter] No images found for keywords', extra={
+                    'keywords': keywords,
+                })
+                return None
+            
+            # Get first result
+            photo = results[0]
+            image_data = {
+                'url': photo.get('urls', {}).get('regular', photo.get('urls', {}).get('small', '')),
+                'description': photo.get('description') or photo.get('alt_description') or 'No description',
+                'author': photo.get('user', {}).get('name', 'Unknown'),
+            }
+            
+            logger.info('[AutoWriter] Image found successfully', extra={
+                'keywords': keywords,
+                'image_url_preview': image_data['url'][:100],
+            })
+            
+            return image_data
+        else:
+            logger.warning('[AutoWriter] Unsupported image service type', extra={
+                'service_type': service_type,
+            })
+            return None
+            
+    except requests.Timeout:
+        logger.error('[AutoWriter] Image search request timed out')
+        return None
+    except Exception as error:
+        logger.error('[AutoWriter] Image search failed', extra={
+            'error': str(error),
+        }, exc_info=True)
+        return None
+
+
 class AutoWriterAgent:
     def __init__(self, api_key: str, api_url: str, model_name: str, language: str = "zh"):
         self.language = language
@@ -473,10 +725,16 @@ class AutoWriterAgent:
             
             raise
 
-    def run(self, user_prompt: str) -> Generator[Dict, None, None]:
+    def run(self, user_prompt: str, enable_image_generation: bool = False) -> Generator[Dict, None, None]:
         logger.info("[AutoWriter] Agent run started with streaming support", extra={
             "prompt_preview": user_prompt[:120],
+            "enable_image_generation": enable_image_generation,
         })
+        
+        if enable_image_generation:
+            logger.info("[AutoWriter] Image generation is ENABLED for this run")
+        else:
+            logger.warning("[AutoWriter] Image generation is DISABLED for this run - images will NOT be searched")
 
         try:
             timeline = [
@@ -689,6 +947,58 @@ class AutoWriterAgent:
                     "type": "article_draft",
                     "html": build_html_from_sections(drafted_sections, article_title=parameters["title"]),
                 }
+                
+                # Generate and search for image if enabled
+                if enable_image_generation:
+                    logger.info("[AutoWriter] Image generation enabled, searching for image", extra={
+                        "section_index": section_index + 1,
+                        "section_title": section["title"],
+                    })
+                    
+                    try:
+                        # Extract keywords from paragraph
+                        keyword_llm = self.config.get_llm(temperature=0.3, streaming=False)
+                        keywords = _extract_keywords_from_paragraph(
+                            section_content,
+                            section["title"],
+                            keyword_llm
+                        )
+                        
+                        # Search for image
+                        image_data = _search_image_for_keywords(keywords)
+                        
+                        if image_data:
+                            logger.info("[AutoWriter] Image found and ready to insert", extra={
+                                "section_index": section_index + 1,
+                                "section_title": section["title"],
+                                "image_url_preview": image_data["url"][:100],
+                            })
+                            
+                            # Yield image event for frontend
+                            yield {
+                                "type": "paragraph_image",
+                                "section_index": section_index,
+                                "section_title": section["title"],
+                                "image_url": image_data["url"],
+                                "image_description": image_data.get("description", ""),
+                                "image_author": image_data.get("author", ""),
+                                "keywords": keywords,
+                                "current": section_index + 1,
+                                "total": total_sections,
+                            }
+                        else:
+                            logger.warning("[AutoWriter] No image found for paragraph", extra={
+                                "section_index": section_index + 1,
+                                "section_title": section["title"],
+                                "keywords": keywords,
+                            })
+                    except Exception as image_error:
+                        logger.error("[AutoWriter] Image generation failed", extra={
+                            "section_index": section_index + 1,
+                            "section_title": section["title"],
+                            "error": str(image_error),
+                        }, exc_info=True)
+                        # Continue without image - don't fail the whole process
 
             # Phase 5: Deliver Final Article
             timeline[3]["state"] = "complete"

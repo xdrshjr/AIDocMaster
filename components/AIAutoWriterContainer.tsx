@@ -28,6 +28,8 @@ const AIAutoWriterContainer = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const wordEditorRef = useRef<WordEditorPanelRef>(null);
   const [isResizing, setIsResizing] = useState(false);
+  // Track images to be inserted for each section
+  const sectionImagesRef = useRef<Map<number, { url: string; description?: string }>>(new Map());
 
   const getEditorContent = useCallback(() => {
     if (!wordEditorRef.current) {
@@ -66,10 +68,136 @@ const AIAutoWriterContainer = ({
       });
       logger.success('Auto-writer editor paragraphs updated from AI chat', { paragraphCount: content.length }, 'AIAutoWriterContainer');
     } else {
-      // Legacy: Set HTML content directly
-      editor.commands.setContent(content);
-      logger.info('Auto-writer editor content updated from AI chat', { length: content.length }, 'AIAutoWriterContainer');
+      // Note: Images are now primarily inserted via ProseMirror API in insertImageAfterSection
+      // This code serves as a backup for cases where HTML is updated before images are inserted
+      let htmlWithImages = content;
+      if (sectionImagesRef.current.size > 0) {
+        logger.debug('[Content Update] Checking for images to insert into HTML (backup method)', {
+          imageCount: sectionImagesRef.current.size,
+        }, 'AIAutoWriterContainer');
+        
+        // Parse HTML and insert images after each section (backup method)
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = htmlWithImages;
+        
+        let h2Count = -1;
+        const h2Elements = tempDiv.querySelectorAll('h2');
+        let imagesInsertedCount = 0;
+        
+        h2Elements.forEach((h2, index) => {
+          const imageInfo = sectionImagesRef.current.get(index);
+          if (imageInfo) {
+            // Check if image already exists after this section
+            let nextElement = h2.nextElementSibling;
+            let hasImage = false;
+            
+            // Check if there's already an image after this h2
+            while (nextElement && nextElement.tagName !== 'H2') {
+              if (nextElement.tagName === 'IMG' || (nextElement.querySelector && nextElement.querySelector('img'))) {
+                hasImage = true;
+                logger.debug('[Content Update] Image already exists in section (backup check)', {
+                  sectionIndex: index,
+                }, 'AIAutoWriterContainer');
+                break;
+              }
+              nextElement = nextElement.nextElementSibling;
+            }
+            
+            if (!hasImage) {
+              // Find the last paragraph in this section
+              let lastPara: Element | null = null;
+              let current = h2.nextElementSibling;
+              while (current && current.tagName !== 'H2') {
+                if (current.tagName === 'P') {
+                  lastPara = current;
+                }
+                current = current.nextElementSibling;
+              }
+              
+              // Insert image after the last paragraph or after h2 if no paragraph
+              const imageElement = document.createElement('img');
+              imageElement.src = imageInfo.url;
+              imageInfo.description && (imageElement.alt = imageInfo.description);
+              imageElement.setAttribute('data-align', 'center');
+              imageElement.className = 'editor-image';
+              
+              if (lastPara) {
+                lastPara.insertAdjacentElement('afterend', imageElement);
+              } else {
+                h2.insertAdjacentElement('afterend', imageElement);
+              }
+              
+              imagesInsertedCount++;
+              logger.debug('[Content Update] Image inserted into HTML (backup method)', {
+                sectionIndex: index,
+                imageUrl: imageInfo.url.substring(0, 50),
+              }, 'AIAutoWriterContainer');
+            }
+          }
+        });
+        
+        htmlWithImages = tempDiv.innerHTML;
+        logger.info('[Content Update] HTML updated with images (backup method)', {
+          originalLength: content.length,
+          updatedLength: htmlWithImages.length,
+          imagesInserted: imagesInsertedCount,
+          totalImagesRecorded: sectionImagesRef.current.size,
+        }, 'AIAutoWriterContainer');
+      }
+      
+      // Set HTML content with images
+      editor.commands.setContent(htmlWithImages);
+      logger.info('[Content Update] Auto-writer editor content updated from AI chat', { 
+        length: htmlWithImages.length,
+        imagesInContent: sectionImagesRef.current.size,
+      }, 'AIAutoWriterContainer');
     }
+  }, []);
+
+  const insertImageAfterSection = useCallback((sectionIndex: number, imageUrl: string, imageDescription?: string) => {
+    logger.info('[Image Insert] Starting image insertion for section', {
+      sectionIndex,
+      imageUrl: imageUrl.substring(0, 100),
+      imageDescription: imageDescription?.substring(0, 50),
+    }, 'AIAutoWriterContainer');
+
+    // Store image info for this section as backup
+    sectionImagesRef.current.set(sectionIndex, {
+      url: imageUrl,
+      description: imageDescription,
+    });
+    
+    logger.debug('[Image Insert] Image info stored in ref', {
+      sectionIndex,
+      totalImagesRecorded: sectionImagesRef.current.size,
+    }, 'AIAutoWriterContainer');
+
+    // Use WordEditorPanel's insertImageAfterSection method which uses ProseMirror API
+    // This is more reliable than DOM manipulation
+    if (!wordEditorRef.current) {
+      logger.warn('[Image Insert] Word editor ref not available', {
+        sectionIndex,
+      }, 'AIAutoWriterContainer');
+      return false;
+    }
+
+    // Try to insert using WordEditorPanel's method
+    // This method uses ProseMirror API which is more reliable
+    const success = wordEditorRef.current.insertImageAfterSection(sectionIndex, imageUrl, imageDescription);
+    
+    if (success) {
+      logger.success('[Image Insert] Image inserted successfully using ProseMirror API', {
+        sectionIndex,
+        imageUrl: imageUrl.substring(0, 50),
+      }, 'AIAutoWriterContainer');
+    } else {
+      logger.warn('[Image Insert] Failed to insert image using ProseMirror API', {
+        sectionIndex,
+        imageUrl: imageUrl.substring(0, 50),
+      }, 'AIAutoWriterContainer');
+    }
+
+    return success;
   }, []);
 
   const exposeDocumentFunctions = useCallback(() => {
@@ -173,6 +301,7 @@ const AIAutoWriterContainer = ({
           title="AI Document Auto-Writer"
           getDocumentContent={getEditorContent}
           updateDocumentContent={updateEditorContent}
+          insertImageAfterSection={insertImageAfterSection}
           className="bg-background"
           agentVariant="auto-writer"
         />

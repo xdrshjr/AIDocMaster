@@ -65,6 +65,7 @@ export interface WordEditorPanelRef {
   clearHighlights: () => void;
   scrollToIssue: (issueId: string) => boolean;
   getEditor: () => Editor | null;
+  insertImageAfterSection: (sectionIndex: number, imageUrl: string, imageDescription?: string) => boolean;
 }
 
 const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
@@ -572,6 +573,177 @@ const WordEditorPanel = forwardRef<WordEditorPanelRef, WordEditorPanelProps>(
     },
     getEditor: () => {
       return editor;
+    },
+    insertImageAfterSection: (sectionIndex: number, imageUrl: string, imageDescription?: string) => {
+      if (!editor) {
+        logger.warn('[Image Insert] Editor not initialized, cannot insert image after section', {
+          sectionIndex,
+        }, 'WordEditorPanel');
+        return false;
+      }
+
+      logger.info('[Image Insert] Starting image insertion using ProseMirror API', {
+        sectionIndex,
+        imageUrl: imageUrl.substring(0, 100),
+        imageDescription: imageDescription?.substring(0, 50),
+      }, 'WordEditorPanel');
+
+      try {
+        const { doc } = editor.state;
+        let h2Count = -1;
+        let targetPos = -1;
+        let targetH2Pos = -1;
+
+        logger.debug('[Image Insert] Searching for section in document', {
+          sectionIndex,
+          docSize: doc.content.size,
+        }, 'WordEditorPanel');
+
+        // Find the position after the specified section's content
+        // Sections are structured as: <h2>Title</h2><p>Content</p>...
+        doc.descendants((node, pos) => {
+          if (node.type.name === 'heading' && node.attrs.level === 2) {
+            h2Count++;
+            
+            logger.debug('[Image Insert] Found H2 heading', {
+              h2Count,
+              sectionIndex,
+              headingText: node.textContent?.substring(0, 50),
+              position: pos,
+            }, 'WordEditorPanel');
+            
+            if (h2Count === sectionIndex) {
+              // Found the target section heading
+              targetH2Pos = pos;
+              
+              // Now find the end of the content after this heading
+              // Look for the next heading or end of document
+              let currentPos = pos + node.nodeSize;
+              
+              logger.debug('[Image Insert] Traversing section content', {
+                sectionIndex,
+                startPos: currentPos,
+                docSize: doc.content.size,
+              }, 'WordEditorPanel');
+              
+              // Traverse forward to find the end of this section's content
+              while (currentPos < doc.content.size) {
+                const nextNode = doc.nodeAt(currentPos);
+                if (!nextNode) {
+                  logger.debug('[Image Insert] Reached end of document', {
+                    sectionIndex,
+                    currentPos,
+                  }, 'WordEditorPanel');
+                  break;
+                }
+                
+                // Check if this is an image node - if so, skip it (avoid duplicate)
+                if (nextNode.type.name === 'image') {
+                  logger.debug('[Image Insert] Found existing image in section, skipping', {
+                    sectionIndex,
+                    currentPos,
+                    imageSrc: nextNode.attrs.src?.substring(0, 50),
+                  }, 'WordEditorPanel');
+                  currentPos += nextNode.nodeSize;
+                  continue;
+                }
+                
+                // If we hit another h2, we've reached the next section
+                if (nextNode.type.name === 'heading' && nextNode.attrs.level === 2) {
+                  logger.debug('[Image Insert] Reached next section', {
+                    sectionIndex,
+                    currentPos,
+                    nextHeadingText: nextNode.textContent?.substring(0, 50),
+                  }, 'WordEditorPanel');
+                  break;
+                }
+                
+                // Move past this node
+                currentPos += nextNode.nodeSize;
+              }
+              
+              targetPos = currentPos;
+              logger.debug('[Image Insert] Target position determined', {
+                sectionIndex,
+                targetPos,
+                h2Pos: targetH2Pos,
+              }, 'WordEditorPanel');
+              return false; // Stop traversal
+            }
+          }
+        });
+
+        if (targetPos === -1) {
+          logger.warn('[Image Insert] Section not found for image insertion', {
+            sectionIndex,
+            totalH2Count: h2Count + 1,
+            docSize: doc.content.size,
+            docContentPreview: doc.textContent?.substring(0, 200),
+          }, 'WordEditorPanel');
+          return false;
+        }
+
+        // Check if there's already an image at or near the target position
+        // Look backwards from targetPos to see if there's an image
+        let hasImage = false;
+        let checkPos = targetPos;
+        for (let i = 0; i < 5 && checkPos >= 0; i++) {
+          const node = doc.nodeAt(checkPos);
+          if (node && node.type.name === 'image') {
+            hasImage = true;
+            logger.debug('[Image Insert] Image already exists at target position', {
+              sectionIndex,
+              checkPos,
+              existingImageSrc: node.attrs.src?.substring(0, 50),
+            }, 'WordEditorPanel');
+            break;
+          }
+          if (checkPos > 0) {
+            checkPos = Math.max(0, checkPos - 10);
+          } else {
+            break;
+          }
+        }
+
+        if (hasImage) {
+          logger.info('[Image Insert] Image already exists in section, skipping insertion', {
+            sectionIndex,
+            targetPos,
+          }, 'WordEditorPanel');
+          return true; // Return true since image already exists
+        }
+
+        // Insert image at the target position
+        logger.debug('[Image Insert] Inserting image at position', {
+          sectionIndex,
+          targetPos,
+        }, 'WordEditorPanel');
+        
+        editor.chain()
+          .focus()
+          .setTextSelection(targetPos)
+          .setImage({ 
+            src: imageUrl, 
+            alt: imageDescription || '',
+            align: 'center' 
+          } as any)
+          .run();
+
+        logger.success('[Image Insert] Image inserted after section successfully', {
+          sectionIndex,
+          position: targetPos,
+          imageUrl: imageUrl.substring(0, 50),
+        }, 'WordEditorPanel');
+
+        return true;
+      } catch (error) {
+        logger.error('[Image Insert] Failed to insert image after section', {
+          sectionIndex,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          errorStack: error instanceof Error ? error.stack : undefined,
+        }, 'WordEditorPanel');
+        return false;
+      }
     },
   }), [editor, paragraphs]);
 

@@ -454,7 +454,16 @@ def agent_route():
                         language=language,
                     )
                     
-                    for event in agent.run(user_request):
+                    # Check if image generation is enabled
+                    # For auto-writer agent, default to True if not specified
+                    enable_image_generation = data.get('enableImageGeneration', True)
+                    
+                    logger.info('[Agent Domain] AutoWriterAgent execution starting', extra={
+                        'enable_image_generation': enable_image_generation,
+                        'request_has_param': 'enableImageGeneration' in data,
+                    })
+                    
+                    for event in agent.run(user_request, enable_image_generation=enable_image_generation):
                         chunk_count += 1
                         event_type = event.get('type', 'unknown')
                         event_types[event_type] = event_types.get(event_type, 0) + 1
@@ -578,6 +587,13 @@ def auto_writer_agent():
         user_prompt = data.get('prompt', '')
         language = data.get('language', 'zh')
         model_id = data.get('modelId')
+        # For auto-writer agent endpoint, default to True if not specified
+        enable_image_generation = data.get('enableImageGeneration', True)
+        
+        logger.info('[Agent Domain] Auto writer request received', extra={
+            'enable_image_generation': enable_image_generation,
+            'request_has_param': 'enableImageGeneration' in data,
+        })
 
         if not user_prompt or not isinstance(user_prompt, str):
             logger.warning('[Agent Domain] Invalid prompt in auto writer request', extra={
@@ -615,11 +631,15 @@ def auto_writer_agent():
             language=language,
         )
 
+        logger.info('[Agent Domain] Auto writer agent initialized', extra={
+            'enable_image_generation': enable_image_generation,
+        })
+
         def generate():
             chunk_count = 0
             event_types = {}
             
-            for event in agent.run(user_prompt):
+            for event in agent.run(user_prompt, enable_image_generation=enable_image_generation):
                 chunk_count += 1
                 event_type = event.get('type', 'unknown')
                 event_types[event_type] = event_types.get(event_type, 0) + 1

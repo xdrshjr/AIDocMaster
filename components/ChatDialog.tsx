@@ -30,6 +30,7 @@ export interface ChatDialogProps {
   welcomeMessage?: string;
   getDocumentContent?: () => string | DocumentParagraph[];
   updateDocumentContent?: (content: string | DocumentParagraph[]) => void;
+  insertImageAfterSection?: (sectionIndex: number, imageUrl: string, imageDescription?: string) => boolean;
   variant?: 'modal' | 'embedded';
   className?: string;
   agentVariant?: AgentVariant;
@@ -47,6 +48,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   welcomeMessage = 'Hello! I\'m your AI assistant. How can I help you today?',
   getDocumentContent,
   updateDocumentContent,
+  insertImageAfterSection,
   variant = 'modal',
   className,
   agentVariant = 'document',
@@ -220,13 +222,27 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       }
 
       // Prepare request body for unified routing endpoint
-      const requestBody = {
+      // Enable image generation for auto-writer agent
+      // The backend will handle routing and only use this for auto-writer agent
+      const requestBody: any = {
         request: command,
         content: documentContent,
         content_type: isParagraphsArray ? 'paragraphs' : 'html',
         language: 'zh',
         modelId: selectedModel?.id,
       };
+      
+      // Only add enableImageGeneration if this is auto-writer agent
+      // For agent-route, the backend will decide which agent to use
+      if (isAutoWriterAgent) {
+        requestBody.enableImageGeneration = true;
+      }
+      
+      logger.debug('Sending agent routing request', {
+        enableImageGeneration: requestBody.enableImageGeneration,
+        isAutoWriterAgent,
+        hasEnableImageGeneration: 'enableImageGeneration' in requestBody,
+      }, 'ChatDialog');
 
       logger.info('Sending agent routing request', {
         commandPreview: command.substring(0, 100),
@@ -538,6 +554,93 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                   message_id: summaryMessage.id,
                   section_title: data.section_title,
                 }, 'ChatDialog');
+              } else if (data.type === 'paragraph_image' && isAutoWriterAgent) {
+                // Handle image insertion after paragraph
+                logger.info('[Agent Event] Paragraph image received', {
+                  section_index: data.section_index,
+                  section_title: data.section_title,
+                  image_url_preview: data.image_url?.substring(0, 100),
+                  keywords: data.keywords,
+                  current: data.current,
+                  total: data.total,
+                }, 'ChatDialog');
+                
+                if (insertImageAfterSection && data.image_url) {
+                  // Use a longer delay and retry mechanism to ensure editor content is updated
+                  // The delay increases for later sections to account for streaming content updates
+                  const baseDelay = 300;
+                  const sectionDelay = data.section_index * 100; // Additional delay for later sections
+                  const totalDelay = baseDelay + sectionDelay;
+                  
+                  logger.debug('[Agent Event] Scheduling image insertion with delay', {
+                    section_index: data.section_index,
+                    section_title: data.section_title,
+                    baseDelay,
+                    sectionDelay,
+                    totalDelay,
+                  }, 'ChatDialog');
+                  
+                  setTimeout(() => {
+                    logger.debug('[Agent Event] Attempting to insert image after section', {
+                      section_index: data.section_index,
+                      section_title: data.section_title,
+                      delay_used: totalDelay,
+                    }, 'ChatDialog');
+                    
+                    // Try to insert the image
+                    let success = false;
+                    let retryCount = 0;
+                    const maxRetries = 3;
+                    const retryDelay = 200;
+                    
+                    const attemptInsert = () => {
+                      success = insertImageAfterSection(
+                        data.section_index,
+                        data.image_url,
+                        data.image_description || ''
+                      );
+                      
+                      if (!success && retryCount < maxRetries) {
+                        retryCount++;
+                        logger.debug('[Agent Event] Image insertion failed, retrying', {
+                          section_index: data.section_index,
+                          retry_count: retryCount,
+                          max_retries: maxRetries,
+                        }, 'ChatDialog');
+                        setTimeout(attemptInsert, retryDelay);
+                      } else if (success) {
+                        logger.success('[Agent Event] Image inserted after section successfully', {
+                          section_index: data.section_index,
+                          section_title: data.section_title,
+                          retry_count: retryCount,
+                        }, 'ChatDialog');
+                        
+                        // Add a chat message about the image insertion
+                        const imageMessage: Message = {
+                          id: `paragraph-image-${data.section_index}-${Date.now()}`,
+                          role: 'assistant',
+                          content: `🖼️ **已为段落 ${data.current}/${data.total}《${data.section_title}》插入相关图片**\n\n🔑 关键词：${data.keywords?.join('、') || '无'}`,
+                          timestamp: new Date(),
+                        };
+                        
+                        setMessages(prev => [...prev, imageMessage]);
+                      } else {
+                        logger.warn('[Agent Event] Failed to insert image after section after retries', {
+                          section_index: data.section_index,
+                          section_title: data.section_title,
+                          retry_count: retryCount,
+                        }, 'ChatDialog');
+                      }
+                    };
+                    
+                    attemptInsert();
+                  }, totalDelay);
+                } else {
+                  logger.warn('[Agent Event] Cannot insert image - missing handler or URL', {
+                    hasHandler: !!insertImageAfterSection,
+                    hasImageUrl: !!data.image_url,
+                  }, 'ChatDialog');
+                }
               } else if (data.type === 'complete') {
                 logger.success('[Agent Event] Agent workflow completed', {
                   message: data.message,
