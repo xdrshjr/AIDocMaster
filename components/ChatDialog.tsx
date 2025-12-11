@@ -13,6 +13,7 @@ import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import AgentStatusPanel, { type AgentStatus, type TodoItem } from './AgentStatusPanel';
 import AgentListDialog from './AgentListDialog';
+import NetworkSearchToggle from './NetworkSearchToggle';
 import { logger } from '@/lib/logger';
 import { type DocumentParagraph } from '@/lib/documentUtils';
 import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
@@ -39,6 +40,12 @@ export interface ChatDialogProps {
 interface Message extends ChatMessageType {
   id: string;
   timestamp: Date;
+  references?: Array<{
+    title: string;
+    url: string;
+    content: string;
+    score?: number;
+  }>;
 }
 
 const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({ 
@@ -71,6 +78,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isAgentListOpen, setIsAgentListOpen] = useState(false);
+  
+  // Network search state (for auto-writer agent)
+  const [networkSearchEnabled, setNetworkSearchEnabled] = useState(true); // Default to enabled
 
   // Track viewport height for responsive dialog sizing (modal only)
   useEffect(() => {
@@ -200,10 +210,6 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     }, 'ChatDialog');
 
     try {
-      // Use unified agent routing endpoint
-      const apiUrl = await buildApiUrl('/api/agent-route');
-      logger.debug('Using agent routing API URL', { apiUrl }, 'ChatDialog');
-
       // Get document content if available (for potential document modifier agent)
       const documentContent = getDocumentContent ? getDocumentContent() : null;
       const isParagraphsArray = Array.isArray(documentContent);
@@ -221,34 +227,44 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           undefined, 'ChatDialog');
       }
 
-      // Prepare request body for unified routing endpoint
-      // Enable image generation for auto-writer agent
-      // The backend will handle routing and only use this for auto-writer agent
-      const requestBody: any = {
-        request: command,
-        content: documentContent,
-        content_type: isParagraphsArray ? 'paragraphs' : 'html',
-        language: 'zh',
-        modelId: selectedModel?.id,
-      };
+      // For auto-writer agent, use dedicated endpoint
+      // For other agents, use unified routing endpoint
+      let apiUrl: string;
+      let requestBody: any;
       
-      // Only add enableImageGeneration if this is auto-writer agent
-      // For agent-route, the backend will decide which agent to use
       if (isAutoWriterAgent) {
-        requestBody.enableImageGeneration = true;
+        // Use auto-writer dedicated endpoint
+        apiUrl = await buildApiUrl('/api/auto-writer');
+        requestBody = {
+          prompt: command,
+          language: 'zh',
+          modelId: selectedModel?.id,
+          enableImageGeneration: true,
+          enableNetworkSearch: networkSearchEnabled,
+        };
+        
+        logger.info('Sending auto-writer request', {
+          promptPreview: command.substring(0, 100),
+          enableNetworkSearch: networkSearchEnabled,
+          modelId: selectedModel?.id || 'default',
+        }, 'ChatDialog');
+      } else {
+        // Use unified agent routing endpoint
+        apiUrl = await buildApiUrl('/api/agent-route');
+        requestBody = {
+          request: command,
+          content: documentContent,
+          content_type: isParagraphsArray ? 'paragraphs' : 'html',
+          language: 'zh',
+          modelId: selectedModel?.id,
+        };
+        
+        logger.info('Sending agent routing request', {
+          commandPreview: command.substring(0, 100),
+          hasDocument,
+          modelId: selectedModel?.id || 'default',
+        }, 'ChatDialog');
       }
-      
-      logger.debug('Sending agent routing request', {
-        enableImageGeneration: requestBody.enableImageGeneration,
-        isAutoWriterAgent,
-        hasEnableImageGeneration: 'enableImageGeneration' in requestBody,
-      }, 'ChatDialog');
-
-      logger.info('Sending agent routing request', {
-        commandPreview: command.substring(0, 100),
-        hasDocument,
-        modelId: selectedModel?.id || 'default',
-      }, 'ChatDialog');
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -501,6 +517,46 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                     timeline: prev?.timeline,
                   };
                 });
+              } else if (data.type === 'network_search_status' && isAutoWriterAgent) {
+                // Network search status update
+                logger.info('[Agent Event] Network search status received', {
+                  section_index: data.section_index,
+                  section_title: data.section_title,
+                  status: data.status,
+                  message: data.message,
+                  reference_count: data.reference_count,
+                  has_references: !!data.references && data.references.length > 0,
+                }, 'ChatDialog');
+                
+                // Update agent status to show network search progress
+                setAgentStatus(prev => ({
+                  ...(prev || { phase: 'writing', message: '' }),
+                  phase: 'writing',
+                  message: data.message || '正在检索参考文献...',
+                  currentStep: data.section_index + 1,
+                  totalSteps: prev?.totalSteps || 0,
+                  todoList: prev?.todoList,
+                  timeline: prev?.timeline,
+                }));
+                
+                // Add a chat message about network search with references
+                if (data.status === 'completed') {
+                  const references = data.references || [];
+                  logger.debug('[Agent Event] Creating network search message', {
+                    section_title: data.section_title,
+                    reference_count: data.reference_count,
+                    references_count: references.length,
+                  }, 'ChatDialog');
+                  
+                  const searchMessage: Message = {
+                    id: `network-search-${data.section_index}-${Date.now()}`,
+                    role: 'assistant',
+                    content: `🔍 **已为段落《${data.section_title}》检索到 ${data.reference_count} 篇参考文献**`,
+                    timestamp: new Date(),
+                    references: references.length > 0 ? references : undefined,
+                  };
+                  setMessages(prev => [...prev, searchMessage]);
+                }
               } else if (data.type === 'content_chunk' && isAutoWriterAgent) {
                 // Real-time streaming chunk from section generation
                 logger.debug('[Agent Event] Content chunk received', {
@@ -1257,6 +1313,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
             role={message.role as 'user' | 'assistant'}
             content={message.content}
             timestamp={message.timestamp}
+            references={message.references}
           />
         ))}
 
@@ -1380,6 +1437,17 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           >
             <List className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
           </button>
+          
+          {/* Network Search Toggle (for auto-writer agent only, next to agent list button) */}
+          {isAutoWriterAgent && (
+            <div className="ml-2">
+              <NetworkSearchToggle
+                disabled={isLoading || isAgentRunning}
+                enabled={networkSearchEnabled}
+                onNetworkSearchStateChange={setNetworkSearchEnabled}
+              />
+            </div>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           {isAgentMode 

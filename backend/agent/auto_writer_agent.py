@@ -248,7 +248,17 @@ def build_html_from_sections(sections: List[Dict[str, str]], article_title: str 
     # Add each section with h2 title and paragraphs
     for section in sections:
         html_parts.append(f"<h2>{section['title']}</h2>")
-        for paragraph in section["content"].split("\n"):
+        
+        # Ensure content is a string
+        content = section.get("content", "")
+        if not isinstance(content, str):
+            logger.warning("[AutoWriter] Section content is not a string, converting", extra={
+                "content_type": type(content).__name__,
+                "section_title": section.get("title", "Unknown"),
+            })
+            content = str(content) if content else ""
+        
+        for paragraph in content.split("\n"):
             clean = paragraph.strip()
             if clean:
                 html_parts.append(f"<p>{clean}</p>")
@@ -301,6 +311,174 @@ def _get_image_service_config_path():
     
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / 'image-service-configs.json'
+
+
+def _get_search_service_config_path():
+    """
+    Determine search service configuration file path based on environment
+    Returns the path to search-service-configs.json
+    """
+    electron_user_data = os.environ.get('ELECTRON_USER_DATA')
+    
+    if electron_user_data:
+        # Running in Electron - use the userData path provided by Electron
+        config_dir = Path(electron_user_data)
+        logger.debug('[AutoWriter] Using Electron userData path for search service configs', extra={
+            'path': str(config_dir)
+        })
+    elif getattr(sys, 'frozen', False):
+        # Running as packaged executable (non-Electron)
+        if sys.platform == 'win32':
+            config_dir = Path(os.environ.get('APPDATA', '')) / 'EcritisAgent'
+        else:
+            config_dir = Path.home() / '.config' / 'EcritisAgent'
+        logger.debug('[AutoWriter] Using packaged app config path for search service configs', extra={
+            'path': str(config_dir)
+        })
+    else:
+        # Running in development
+        config_dir = Path(__file__).parent.parent.parent / 'userData'
+        logger.debug('[AutoWriter] Using development config path for search service configs', extra={
+            'path': str(config_dir)
+        })
+    
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / 'search-service-configs.json'
+
+
+def _search_references_for_section(
+    section_title: str,
+    section_summary: str,
+    topic: str,
+    keywords: List[str]
+) -> List[Dict[str, str]]:
+    """
+    Search for 5 reference articles for a section using the configured search service.
+    
+    Args:
+        section_title: Title of the section
+        section_summary: Summary of the section
+        topic: Main topic of the article
+        keywords: Keywords from the article parameters
+        
+    Returns:
+        List of reference dictionaries with 'title', 'url', 'content', 'score'
+    """
+    logger.info('[AutoWriter] Searching references for section', extra={
+        'section_title': section_title,
+        'section_summary': section_summary[:100] if section_summary else '',
+        'topic': topic,
+        'keywords': keywords,
+    })
+    
+    try:
+        # Load search service configuration
+        config_path = _get_search_service_config_path()
+        
+        if not config_path.exists():
+            logger.warning('[AutoWriter] Search service config file not found')
+            return []
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            configs = json.load(f)
+        
+        services = configs.get('searchServices', [])
+        if not services:
+            logger.warning('[AutoWriter] No search services configured')
+            return []
+        
+        # Select default service
+        selected_service = None
+        default_service_id = configs.get('defaultServiceId')
+        if default_service_id:
+            selected_service = next((s for s in services if s.get('id') == default_service_id), None)
+        
+        if not selected_service:
+            selected_service = services[0]
+        
+        logger.info('[AutoWriter] Using search service', extra={
+            'serviceId': selected_service.get('id'),
+            'serviceName': selected_service.get('name'),
+            'serviceType': selected_service.get('type'),
+        })
+        
+        # Get API keys
+        api_keys = selected_service.get('apiKeys', [])
+        if not api_keys:
+            logger.error('[AutoWriter] No API keys available for search service')
+            return []
+        
+        # Select random API key
+        selected_api_key = random.choice(api_keys)
+        
+        # Build search query from section title, summary, topic, and keywords
+        query_parts = [section_title, section_summary, topic]
+        query_parts.extend(keywords[:3])  # Add first 3 keywords
+        search_query = " ".join([part for part in query_parts if part and part.strip()])
+        
+        # Search based on service type
+        service_type = selected_service.get('type', 'tavily')
+        
+        if service_type == 'tavily':
+            # Search Tavily API
+            tavily_api_url = 'https://api.tavily.com/search'
+            
+            search_payload = {
+                'api_key': selected_api_key,
+                'query': search_query.strip(),
+                'max_results': 5,  # Get 5 references
+                'search_depth': 'basic'
+            }
+            
+            logger.debug('[AutoWriter] Calling Tavily API for references', extra={
+                'query': search_query,
+                'max_results': 5,
+            })
+            
+            response = requests.post(tavily_api_url, json=search_payload, timeout=15)
+            
+            if response.status_code != 200:
+                logger.error('[AutoWriter] Tavily API error', extra={
+                    'status_code': response.status_code,
+                    'error_text': response.text[:200],
+                })
+                return []
+            
+            result_data = response.json()
+            results = result_data.get('results', [])
+            
+            # Format results
+            formatted_results = []
+            for idx, result in enumerate(results):
+                formatted_result = {
+                    'title': result.get('title', 'No title'),
+                    'url': result.get('url', ''),
+                    'content': result.get('content', ''),
+                    'score': result.get('score', 0.0),
+                }
+                formatted_results.append(formatted_result)
+            
+            logger.info('[AutoWriter] References found successfully', extra={
+                'section_title': section_title,
+                'reference_count': len(formatted_results),
+            })
+            
+            return formatted_results
+        else:
+            logger.warning('[AutoWriter] Unsupported search service type', extra={
+                'service_type': service_type,
+            })
+            return []
+            
+    except requests.Timeout:
+        logger.error('[AutoWriter] Reference search request timed out')
+        return []
+    except Exception as error:
+        logger.error('[AutoWriter] Reference search failed', extra={
+            'section_title': section_title,
+            'error': str(error),
+        }, exc_info=True)
+        return []
 
 
 def _extract_keywords_from_paragraph(
@@ -611,7 +789,9 @@ class AutoWriterAgent:
         total_sections: int,
         params: WriterParameters,
         previous_sections: List[Dict[str, str]],
-        previous_summaries: List[Dict[str, str]]
+        previous_summaries: List[Dict[str, str]],
+        enable_network_search: bool = False,
+        all_references: List[Dict[str, str]] = None
     ) -> Generator[Dict, None, str]:
         """
         Stream section content generation with real-time chunk events.
@@ -623,7 +803,96 @@ class AutoWriterAgent:
             "total_sections": total_sections,
             "section_title": section["title"],
             "previous_summaries_count": len(previous_summaries),
+            "enable_network_search": enable_network_search,
         })
+
+        # Search for references if network search is enabled
+        section_references = []
+        added_reference_indices = []  # Track reference indices for prompt numbering
+        if enable_network_search:
+            logger.info("[AutoWriter] Network search enabled, searching references for section", extra={
+                "section_index": section_index + 1,
+                "section_title": section["title"],
+            })
+            
+            # Yield status event for reference search
+            yield {
+                "type": "network_search_status",
+                "section_index": section_index,
+                "section_title": section["title"],
+                "status": "searching",
+                "message": f"正在为段落《{section['title']}》检索参考文献...",
+            }
+            
+            section_references = _search_references_for_section(
+                section["title"],
+                section.get("summary", ""),
+                params["topic"],
+                params["keywords"]
+            )
+            
+            if section_references:
+                logger.info("[AutoWriter] References found for section", extra={
+                    "section_index": section_index + 1,
+                    "reference_count": len(section_references),
+                })
+                
+                # Add to all_references list if provided
+                # Track which references were actually added (for numbering in prompt)
+                if all_references is not None:
+                    # Check if references already exist to avoid duplicates
+                    existing_urls = {ref.get('url', '') for ref in all_references}
+                    for ref in section_references:
+                        ref_url = ref.get('url', '')
+                        if ref_url not in existing_urls:
+                            all_references.append(ref)
+                            existing_urls.add(ref_url)
+                            # Track the index of this reference in all_references (1-based)
+                            added_reference_indices.append(len(all_references))
+                        else:
+                            # Reference already exists, find its index
+                            for idx, existing_ref in enumerate(all_references, start=1):
+                                if existing_ref.get('url', '') == ref_url:
+                                    added_reference_indices.append(idx)
+                                    break
+                else:
+                    # If all_references is None, use sequential numbering
+                    added_reference_indices = list(range(1, len(section_references) + 1))
+                
+                # Yield status event for reference search completion
+                logger.info("[AutoWriter] Sending network_search_status event with references", extra={
+                    "section_index": section_index + 1,
+                    "section_title": section["title"],
+                    "reference_count": len(section_references),
+                })
+                yield {
+                    "type": "network_search_status",
+                    "section_index": section_index,
+                    "section_title": section["title"],
+                    "status": "completed",
+                    "message": f"已检索到 {len(section_references)} 篇参考文献",
+                    "reference_count": len(section_references),
+                    "references": section_references,  # Include actual reference data
+                }
+            else:
+                logger.warning("[AutoWriter] No references found for section", extra={
+                    "section_index": section_index + 1,
+                })
+                
+                # Yield status event for no references found
+                logger.info("[AutoWriter] No references found, sending network_search_status event", extra={
+                    "section_index": section_index + 1,
+                    "section_title": section["title"],
+                })
+                yield {
+                    "type": "network_search_status",
+                    "section_index": section_index,
+                    "section_title": section["title"],
+                    "status": "completed",
+                    "message": "未找到相关参考文献",
+                    "reference_count": 0,
+                    "references": [],  # Empty references array
+                }
 
         # Create streaming LLM instance
         streaming_llm = self.config.get_llm(temperature=params["temperature"], streaming=True)
@@ -647,6 +916,50 @@ class AutoWriterAgent:
             })
             previous_context = "这是文章的第一段。"
 
+        # Build references context if available
+        references_context = ""
+        if section_references:
+            logger.debug("[AutoWriter] Including references in prompt", extra={
+                "section_index": section_index + 1,
+                "reference_count": len(section_references),
+                "total_references_so_far": len(all_references) if all_references is not None else 0,
+                "added_reference_indices": added_reference_indices,
+            })
+            
+            # Use the indices we tracked when adding references
+            ref_indices = added_reference_indices if added_reference_indices else []
+            
+            # Fallback: if we don't have indices, calculate them
+            if not ref_indices:
+                if all_references is not None:
+                    # Find the indices of section_references in all_references
+                    ref_urls = {ref.get('url', '') for ref in section_references}
+                    for idx, ref in enumerate(all_references, start=1):
+                        if ref.get('url', '') in ref_urls:
+                            ref_indices.append(idx)
+                else:
+                    ref_indices = list(range(1, len(section_references) + 1))
+            
+            ref_lines = []
+            for idx, ref in enumerate(section_references):
+                ref_num = ref_indices[idx] if idx < len(ref_indices) else (idx + 1)
+                ref_lines.append(
+                    f"[{ref_num}] {ref.get('title', 'No title')}\n"
+                    f"    内容摘要：{ref.get('content', '')[:200]}...\n"
+                    f"    来源：{ref.get('url', '')}"
+                )
+            
+            references_context = (
+                "\n\n=== 参考文献 ===\n"
+                "请根据以下参考文献来写作，并在适当的地方使用参考文献标号（如[1], [2]等）：\n"
+                + "\n\n".join(ref_lines) + "\n\n"
+                "要求：\n"
+                "- 在引用参考文献的内容时，必须在相应位置标注参考文献标号，格式为[数字]\n"
+                "- 参考文献标号应该放在引用内容的后面，如：根据研究显示[1]，...\n"
+                "- 确保引用的内容与参考文献相关\n"
+                "- 使用正确的参考文献编号，不要自己编造编号\n"
+            )
+
         # Create prompt for section with article title and previous summaries
         prompt = SystemMessage(
             content=(
@@ -657,6 +970,7 @@ class AutoWriterAgent:
                 f"语调：{params['tone']}\n"
                 f"必备关键词：{', '.join(params['keywords']) or '无'}\n\n"
                 f"{previous_context}\n\n"
+                f"{references_context}"
                 f"请写作段落《{section['title']}》，要求紧扣概述：{section['summary']}，字数 250-400 字。\n"
                 f"内容需要结构清晰，使用自然段，语言流畅，并与前面段落保持连贯性。"
             )
@@ -725,16 +1039,25 @@ class AutoWriterAgent:
             
             raise
 
-    def run(self, user_prompt: str, enable_image_generation: bool = False) -> Generator[Dict, None, None]:
+    def run(self, user_prompt: str, enable_image_generation: bool = False, enable_network_search: bool = False) -> Generator[Dict, None, None]:
         logger.info("[AutoWriter] Agent run started with streaming support", extra={
             "prompt_preview": user_prompt[:120],
             "enable_image_generation": enable_image_generation,
+            "enable_network_search": enable_network_search,
         })
         
         if enable_image_generation:
             logger.info("[AutoWriter] Image generation is ENABLED for this run")
         else:
             logger.warning("[AutoWriter] Image generation is DISABLED for this run - images will NOT be searched")
+        
+        if enable_network_search:
+            logger.info("[AutoWriter] Network search is ENABLED for this run - references will be searched and included")
+        else:
+            logger.info("[AutoWriter] Network search is DISABLED for this run - references will NOT be searched")
+        
+        # Track all references across all sections
+        all_references: List[Dict[str, str]] = []
 
         try:
             timeline = [
@@ -840,19 +1163,24 @@ class AutoWriterAgent:
                 chunk_counter = 0
                 last_update_length = 0
                 
+                last_event = None
                 for event in self._stream_section_content(
                     section,
                     section_index,
                     total_sections,
                     parameters,
                     drafted_sections,
-                    section_summaries  # Pass summaries for context
+                    section_summaries,  # Pass summaries for context
+                    enable_network_search,  # Pass network search flag
+                    all_references  # Pass references list to track all references
                 ):
-                    if event["type"] == "content_chunk":
+                    last_event = event
+                    
+                    if event.get("type") == "content_chunk":
                         # Forward chunk event to frontend
                         yield event
                         # Accumulate for building draft HTML
-                        section_content += event["chunk"]
+                        section_content += event.get("chunk", "")
                         chunk_counter += 1
 
                         # Send draft HTML update every 2 chunks OR every 50 characters for smooth real-time display
@@ -881,14 +1209,23 @@ class AutoWriterAgent:
                             }
                             
                             last_update_length = len(section_content)
+                    elif event.get("type") == "network_search_status":
+                        # Forward network search status events to frontend
+                        yield event
                     else:
-                        # This shouldn't happen, but handle gracefully
-                        section_content = event
-                        break
+                        # Handle other event types (shouldn't happen normally)
+                        logger.debug("[AutoWriter] Unexpected event type in section stream", extra={
+                            "event_type": event.get("type"),
+                            "section_index": section_index + 1,
+                        })
+                        # If it's a string (return value), use it as content
+                        if isinstance(event, str):
+                            section_content = event
+                            break
 
-                # If section_content is empty (generator returned directly), use the return value
-                if not section_content and isinstance(event, str):
-                    section_content = event
+                # If section_content is empty and last_event is a string, use it
+                if not section_content and isinstance(last_event, str):
+                    section_content = last_event
 
                 # Add completed section
                 completed_section = {
@@ -1005,14 +1342,44 @@ class AutoWriterAgent:
             timeline[4]["state"] = "active"
             yield self._status_event("delivering", "所有段落完成，正在整理最终文稿...", timeline)
 
+            # Build references section if network search was enabled and references were found
+            references_section = ""
+            if enable_network_search and all_references:
+                logger.info("[AutoWriter] Building references section", extra={
+                    "reference_count": len(all_references),
+                })
+                
+                references_html_parts = ["<h2>参考文献</h2>"]
+                references_markdown_parts = ["## 参考文献\n"]
+                
+                for idx, ref in enumerate(all_references, start=1):
+                    ref_title = ref.get('title', 'No title')
+                    ref_url = ref.get('url', '')
+                    
+                    references_html_parts.append(
+                        f"<p>[{idx}] {ref_title}. <a href=\"{ref_url}\" target=\"_blank\" rel=\"noopener noreferrer\">{ref_url}</a></p>"
+                    )
+                    references_markdown_parts.append(
+                        f"[{idx}] {ref_title}. {ref_url}"
+                    )
+                
+                references_section = "\n".join(references_html_parts)
+                references_markdown_section = "\n\n" + "\n".join(references_markdown_parts)
+            else:
+                references_markdown_section = ""
+
             # Build final output with article title
             final_html = build_html_from_sections(drafted_sections, article_title=parameters["title"])
+            
+            # Add references section to HTML if available
+            if references_section:
+                final_html += references_section
             
             # Build markdown with title
             final_markdown_parts = [f"# {parameters['title']}\n"]
             for section in drafted_sections:
                 final_markdown_parts.append(f"## {section['title']}\n\n{section['content']}\n")
-            final_markdown = "\n".join(final_markdown_parts).strip()
+            final_markdown = "\n".join(final_markdown_parts).strip() + references_markdown_section
 
             logger.info("[AutoWriter] Final article assembled", extra={
                 "total_sections": len(drafted_sections),

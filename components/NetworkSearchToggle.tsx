@@ -14,18 +14,33 @@ import { logger } from '@/lib/logger';
 
 export interface NetworkSearchToggleProps {
   disabled?: boolean;
+  defaultEnabled?: boolean; // Default value for uncontrolled mode
+  enabled?: boolean; // Controlled mode value
   onNetworkSearchStateChange?: (enabled: boolean) => void;
 }
 
-const NetworkSearchToggle = ({ disabled = false, onNetworkSearchStateChange }: NetworkSearchToggleProps) => {
-  const [networkSearchEnabled, setNetworkSearchEnabled] = useState(false);
+const NetworkSearchToggle = ({ 
+  disabled = false, 
+  defaultEnabled = true, // Default to enabled
+  enabled: controlledEnabled,
+  onNetworkSearchStateChange 
+}: NetworkSearchToggleProps) => {
+  const [internalEnabled, setInternalEnabled] = useState(defaultEnabled);
+  
+  // Use controlled value if provided, otherwise use internal state
+  const networkSearchEnabled = controlledEnabled !== undefined ? controlledEnabled : internalEnabled;
 
   const handleToggle = useCallback(() => {
     const newState = !networkSearchEnabled;
-    setNetworkSearchEnabled(newState);
+    
+    // Update internal state only if not controlled
+    if (controlledEnabled === undefined) {
+      setInternalEnabled(newState);
+    }
     
     logger.info('Network search toggle changed', {
       enabled: newState,
+      isControlled: controlledEnabled !== undefined,
     }, 'NetworkSearchToggle');
     
     if (onNetworkSearchStateChange) {
@@ -33,7 +48,7 @@ const NetworkSearchToggle = ({ disabled = false, onNetworkSearchStateChange }: N
     } else {
       logger.warn('onNetworkSearchStateChange callback not provided', undefined, 'NetworkSearchToggle');
     }
-  }, [networkSearchEnabled, onNetworkSearchStateChange]);
+  }, [networkSearchEnabled, controlledEnabled, onNetworkSearchStateChange]);
 
   return (
     <div className="flex items-center gap-2">

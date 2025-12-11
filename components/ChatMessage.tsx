@@ -8,7 +8,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bot, User, Copy, Languages, Loader2 } from 'lucide-react';
+import { Bot, User, Copy, Languages, Loader2, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -28,9 +28,15 @@ export interface ChatMessageProps {
   networkSearchExecutionSteps?: any[];
   isMcpStreaming?: boolean; // Indicates if MCP steps are still being streamed
   isNetworkSearchStreaming?: boolean; // Indicates if network search steps are still being streamed
+  references?: Array<{
+    title: string;
+    url: string;
+    content: string;
+    score?: number;
+  }>; // References for auto-writer agent
 }
 
-const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearchExecutionSteps, isMcpStreaming = false, isNetworkSearchStreaming = false }: ChatMessageProps) => {
+const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearchExecutionSteps, isMcpStreaming = false, isNetworkSearchStreaming = false, references }: ChatMessageProps) => {
   const isUser = role === 'user';
   const [showTranslation, setShowTranslation] = useState(false);
   const [translationLines, setTranslationLines] = useState<string[]>([]);
@@ -38,6 +44,7 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
   const [hasTranslation, setHasTranslation] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [codeBlockCopyStates, setCodeBlockCopyStates] = useState<Record<string, boolean>>({});
+  const [isReferencesExpanded, setIsReferencesExpanded] = useState(false); // Default collapsed
 
   const handleFormatTimestamp = (date: Date): string => {
     const now = new Date();
@@ -594,6 +601,104 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
                   return <div key={index} className="h-2" />;
                 })}
               </div>
+            </div>
+          )}
+
+          {/* References Display (for auto-writer agent) */}
+          {!isUser && references && references.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-border/60">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-blue-500" />
+                  <div className="text-xs font-medium text-muted-foreground/80">
+                    参考文献 ({references.length} 篇)
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsReferencesExpanded(prev => {
+                      const newState = !prev;
+                      logger.debug('Toggled references expansion', {
+                        expanded: newState,
+                        referenceCount: references.length,
+                      }, 'ChatMessage');
+                      return newState;
+                    });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setIsReferencesExpanded(prev => !prev);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 flex-shrink-0 px-2 py-1 rounded-md hover:bg-muted/80 transition-colors text-muted-foreground hover:text-foreground text-xs"
+                  aria-label={isReferencesExpanded ? '折叠参考文献' : '展开参考文献'}
+                  aria-expanded={isReferencesExpanded}
+                  tabIndex={0}
+                >
+                  {isReferencesExpanded ? (
+                    <>
+                      <ChevronUp className="w-3.5 h-3.5" />
+                      <span>折叠</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      <span>展开</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              {isReferencesExpanded && (
+                <div className="mt-2 space-y-2">
+                  {references.map((ref, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-muted/40 rounded p-3 border border-border/30 hover:border-border/50 transition-colors"
+                    >
+                      <a
+                        href={ref.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline block mb-2"
+                        onClick={() => {
+                          logger.info('Reference link clicked', {
+                            title: ref.title,
+                            url: ref.url,
+                            index: idx + 1,
+                          }, 'ChatMessage');
+                        }}
+                      >
+                        {ref.title || '无标题'}
+                      </a>
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 mb-2">
+                        {ref.content || '无内容摘要'}
+                      </p>
+                      <div className="flex items-center justify-between">
+                        <a
+                          href={ref.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-300 truncate max-w-[70%]"
+                          onClick={() => {
+                            logger.debug('Reference URL clicked', {
+                              url: ref.url,
+                              index: idx + 1,
+                            }, 'ChatMessage');
+                          }}
+                        >
+                          {ref.url}
+                        </a>
+                        {ref.score !== undefined && (
+                          <span className="text-xs text-muted-foreground/70 px-2 py-0.5 bg-muted/60 rounded">
+                            相关性: {(ref.score * 100).toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

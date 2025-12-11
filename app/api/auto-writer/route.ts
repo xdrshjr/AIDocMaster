@@ -16,10 +16,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { prompt, language = 'zh', modelId } = body as {
+    const { prompt, language = 'zh', modelId, enableNetworkSearch = true } = body as {
       prompt: string;
       language?: string;
       modelId?: string;
+      enableNetworkSearch?: boolean;
     };
 
     if (!prompt || typeof prompt !== 'string') {
@@ -40,7 +41,12 @@ export async function POST(request: NextRequest) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt, language, modelId }),
+        body: JSON.stringify({ 
+          prompt, 
+          language, 
+          modelId, 
+          enableNetworkSearch 
+        }),
         signal: controller.signal,
       });
     } finally {

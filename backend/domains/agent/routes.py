@@ -589,10 +589,14 @@ def auto_writer_agent():
         model_id = data.get('modelId')
         # For auto-writer agent endpoint, default to True if not specified
         enable_image_generation = data.get('enableImageGeneration', True)
+        # For network search, default to True if not specified
+        enable_network_search = data.get('enableNetworkSearch', True)
         
         logger.info('[Agent Domain] Auto writer request received', extra={
             'enable_image_generation': enable_image_generation,
+            'enable_network_search': enable_network_search,
             'request_has_param': 'enableImageGeneration' in data,
+            'request_has_network_search_param': 'enableNetworkSearch' in data,
         })
 
         if not user_prompt or not isinstance(user_prompt, str):
@@ -639,7 +643,11 @@ def auto_writer_agent():
             chunk_count = 0
             event_types = {}
             
-            for event in agent.run(user_prompt, enable_image_generation=enable_image_generation):
+            for event in agent.run(
+                user_prompt, 
+                enable_image_generation=enable_image_generation,
+                enable_network_search=enable_network_search
+            ):
                 chunk_count += 1
                 event_type = event.get('type', 'unknown')
                 event_types[event_type] = event_types.get(event_type, 0) + 1
