@@ -293,6 +293,18 @@ class APIRouteHandlers {
     });
     this.proxyToFlask('/api/auto-writer-agent', 'POST', reqBody, res);
   }
+
+  /**
+   * Handle POST /api/auto-writer (alias for /api/auto-writer-agent)
+   */
+  async handleAutoWriterRequest(reqBody, res) {
+    this.logger.info('Auto writer request received (aliased to auto-writer-agent)', {
+      hasPrompt: !!reqBody?.prompt,
+      promptPreview: reqBody?.prompt?.substring(0, 50),
+    });
+    // Proxy to Flask backend's auto-writer-agent endpoint
+    this.proxyToFlask('/api/auto-writer-agent', 'POST', reqBody, res);
+  }
 }
 
 /**
@@ -436,6 +448,16 @@ class ElectronAPIServer {
           await this.routeHandlers.handleAutoWriterAgentRequest(body, res);
         } else {
           this.logger.warn('Method not allowed for /api/auto-writer-agent', { method });
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+        }
+      } else if (normalizedPath === '/api/auto-writer') {
+        if (method === 'POST') {
+          this.logger.info('Handling POST /api/auto-writer request');
+          const body = await this.parseRequestBody(req);
+          await this.routeHandlers.handleAutoWriterRequest(body, res);
+        } else {
+          this.logger.warn('Method not allowed for /api/auto-writer', { method });
           res.writeHead(405, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Method not allowed' }));
         }

@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef, forwardRef } from 'react';
+import { useState, useEffect, useRef, useCallback, forwardRef } from 'react';
 import { flushSync } from 'react-dom';
 import { X, Loader2, Trash2, Trash, Bot, List } from 'lucide-react';
 import ChatMessage from './ChatMessage';
@@ -72,6 +72,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Agent mode state
   const [isAgentMode, setIsAgentMode] = useState(false);
@@ -182,12 +185,80 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
     }
   }, [shouldRender, messages.length, welcomeMessage]);
 
-  // Auto-scroll to bottom on new messages
+  // Check if user is near bottom of scroll container
+  const isNearBottom = useCallback((container: HTMLElement, threshold = 100): boolean => {
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    return distanceFromBottom <= threshold;
+  }, []);
+
+  // Handle scroll events to detect user scrolling
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
     }
-  }, [messages, streamingContent]);
+
+    const handleScroll = () => {
+      // Clear any existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+
+      // Mark that user is scrolling
+      isUserScrollingRef.current = true;
+      logger.debug('User scroll detected', {
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+      }, 'ChatDialog');
+
+      // Check if user scrolled away from bottom
+      const nearBottom = isNearBottom(container);
+      if (!nearBottom) {
+        setShouldAutoScroll(false);
+        logger.debug('Auto-scroll disabled - user scrolled away from bottom', {
+          distanceFromBottom: container.scrollHeight - container.scrollTop - container.clientHeight,
+        }, 'ChatDialog');
+      } else {
+        // User scrolled back to bottom, re-enable auto-scroll
+        setShouldAutoScroll(true);
+        logger.debug('Auto-scroll re-enabled - user scrolled to bottom', undefined, 'ChatDialog');
+      }
+
+      // Reset user scrolling flag after a delay
+      scrollTimeoutRef.current = setTimeout(() => {
+        isUserScrollingRef.current = false;
+      }, 150);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    logger.debug('Scroll event listener attached to messages container', undefined, 'ChatDialog');
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      logger.debug('Scroll event listener removed from messages container', undefined, 'ChatDialog');
+    };
+  }, [isNearBottom]);
+
+  // Auto-scroll to bottom on new messages (only if shouldAutoScroll is true)
+  useEffect(() => {
+    if (shouldAutoScroll && messagesEndRef.current && !isUserScrollingRef.current) {
+      logger.debug('Auto-scrolling to bottom', {
+        messageCount: messages.length,
+        hasStreamingContent: !!streamingContent,
+      }, 'ChatDialog');
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    } else if (!shouldAutoScroll) {
+      logger.debug('Auto-scroll skipped - user has scrolled away', {
+        messageCount: messages.length,
+        hasStreamingContent: !!streamingContent,
+      }, 'ChatDialog');
+    }
+  }, [messages, streamingContent, shouldAutoScroll]);
 
   const handleAgentExecution = async (command: string) => {
     logger.info('Starting new agent execution', { 

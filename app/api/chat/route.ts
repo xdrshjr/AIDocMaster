@@ -14,6 +14,142 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
+ * DELETE /api/chat
+ * Stop an active chat streaming session
+ */
+export async function DELETE(request: NextRequest) {
+  const startTime = Date.now();
+  logger.info('Chat API stop request received', undefined, 'API:Chat');
+
+  try {
+    // Parse request body to get session ID
+    const body = await request.json();
+    const { sessionId } = body as { sessionId?: string };
+
+    if (!sessionId) {
+      logger.warn('Stop request missing sessionId', undefined, 'API:Chat');
+      return new Response(
+        JSON.stringify({ 
+          error: 'sessionId is required',
+          success: false 
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    logger.info('Stopping chat session', { sessionId }, 'API:Chat');
+
+    // Build Flask backend stop URL
+    const flaskUrl = buildFlaskApiUrl('/api/chat/stop');
+    
+    logger.debug('Forwarding stop request to Flask backend', { 
+      url: flaskUrl,
+      sessionId 
+    }, 'API:Chat');
+
+    // Forward stop request to Flask backend
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for stop
+
+    let flaskResponse: Response;
+    
+    try {
+      flaskResponse = await fetch(flaskUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sessionId }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      logger.debug('Flask backend stop response received', {
+        status: flaskResponse.status,
+        ok: flaskResponse.ok,
+      }, 'API:Chat');
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      logger.error('Failed to connect to Flask backend for stop', {
+        error: fetchError instanceof Error ? fetchError.message : 'Unknown error',
+        sessionId,
+        duration: `${Date.now() - startTime}ms`,
+      }, 'API:Chat');
+      
+      return new Response(
+        JSON.stringify({ 
+          error: 'Flask backend unavailable',
+          details: `Could not connect to Flask backend to stop session`,
+          success: false
+        }),
+        {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    // Parse Flask response
+    const responseData = await flaskResponse.json();
+    
+    if (!flaskResponse.ok) {
+      logger.error('Flask backend returned error for stop request', {
+        status: flaskResponse.status,
+        data: responseData,
+        sessionId,
+      }, 'API:Chat');
+      
+      return new Response(
+        JSON.stringify(responseData),
+        {
+          status: flaskResponse.status,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    logger.success('Chat session stopped successfully', {
+      sessionId,
+      duration: `${Date.now() - startTime}ms`,
+    }, 'API:Chat');
+
+    return new Response(
+      JSON.stringify(responseData),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    
+    logger.error('Chat API stop request failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      duration: `${duration}ms`,
+    }, 'API:Chat');
+
+    return new Response(
+      JSON.stringify({ 
+        error: 'Stop request failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred',
+        success: false
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
+/**
  * POST /api/chat
  * Proxy chat requests to Flask backend
  */

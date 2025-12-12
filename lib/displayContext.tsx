@@ -122,3 +122,4 @@ export const useDisplay = (): DisplayContextType => {
   return context;
 };
 
+

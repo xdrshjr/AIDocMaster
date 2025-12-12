@@ -229,9 +229,14 @@ Important: Return ONLY the JSON object, no additional text or explanations. If n
             'model': config['modelName'],
             'messages': messages,
             'stream': True,
-            'temperature': 0.3,  # Lower temperature for more consistent validation
-            'max_tokens': 4000
+            'temperature': 0.3  # Lower temperature for more consistent validation
         }
+        
+        logger.info('[Document Domain] [LLM Request] Removed max_tokens limit to allow unlimited response length', extra={
+            'model': config['modelName'],
+            'chunk_index': chunk_index,
+            'note': 'Document validation responses will not be truncated by token limits'
+        })
         
         # Make streaming request to LLM API
         def generate():
@@ -436,9 +441,14 @@ def text_processing():
             'model': config['modelName'],
             'messages': messages,
             'stream': False,
-            'temperature': 0.7,
-            'max_tokens': 2000
+            'temperature': 0.7
         }
+        
+        logger.info('[Document Domain] [TextProcessing] [LLM Request] Removed max_tokens limit to allow unlimited response length', extra={
+            'model': config['modelName'],
+            'processing_type': processing_type,
+            'note': 'Text processing responses will not be truncated by token limits'
+        })
         
         # Make request to LLM API
         logger.debug('[Document Domain] [TextProcessing] Making LLM API request', extra={

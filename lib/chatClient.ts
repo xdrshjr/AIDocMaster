@@ -202,6 +202,11 @@ export const createStreamingChatCompletion = async (
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), config.timeout);
 
+      logger.debug('Removed max_tokens limit to allow unlimited response length', {
+        model: config.modelName,
+        note: 'AI responses will not be truncated by token limits',
+      }, 'ChatClient');
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -213,7 +218,6 @@ export const createStreamingChatCompletion = async (
           messages,
           stream: true,
           temperature: 0.7,
-          max_tokens: 2000,
         }),
         signal: controller.signal,
       });
@@ -381,6 +385,11 @@ export const createChatCompletion = async (
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), config.timeout);
 
+    logger.debug('Removed max_tokens limit to allow unlimited response length', {
+      model: config.modelName,
+      note: 'AI responses will not be truncated by token limits',
+    }, 'ChatClient');
+
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -391,7 +400,6 @@ export const createChatCompletion = async (
         model: config.modelName,
         messages,
         temperature: 0.7,
-        max_tokens: 2000,
       }),
       signal: controller.signal,
     });

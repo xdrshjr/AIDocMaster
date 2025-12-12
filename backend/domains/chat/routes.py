@@ -6,6 +6,8 @@ Handles AI chat completion requests with streaming support
 import logging
 import json
 import requests
+import threading
+import uuid
 from flask import Blueprint, request, jsonify, Response, stream_with_context, current_app
 from datetime import datetime
 
@@ -13,6 +15,60 @@ logger = logging.getLogger(__name__)
 
 # Create blueprint for chat domain
 chat_bp = Blueprint('chat', __name__, url_prefix='/api')
+
+# Session management for tracking active streams
+# Dictionary to track active streaming sessions: {session_id: stop_flag}
+active_streaming_sessions = {}
+sessions_lock = threading.Lock()
+
+
+@chat_bp.route('/chat/stop', methods=['POST'])
+def stop_chat():
+    """
+    Stop an active chat streaming session
+    Request body: { "sessionId": "unique-session-id" }
+    """
+    logger.info('[Chat Domain] Stop chat request received')
+    
+    try:
+        data = request.get_json()
+        session_id = data.get('sessionId')
+        
+        if not session_id:
+            logger.warning('[Chat Domain] Stop request missing sessionId')
+            return jsonify({
+                'error': 'sessionId is required',
+                'success': False
+            }), 400
+        
+        logger.info(f'[Chat Domain] Attempting to stop session: {session_id}')
+        
+        # Set stop flag for the session
+        with sessions_lock:
+            if session_id in active_streaming_sessions:
+                active_streaming_sessions[session_id]['stop_flag'] = True
+                logger.info(f'[Chat Domain] Stop flag set for session {session_id}')
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'Session {session_id} stop signal sent',
+                    'sessionId': session_id
+                })
+            else:
+                logger.warning(f'[Chat Domain] Session {session_id} not found or already completed')
+                return jsonify({
+                    'success': False,
+                    'message': f'Session {session_id} not found or already completed',
+                    'sessionId': session_id
+                }), 404
+    
+    except Exception as e:
+        logger.error(f'[Chat Domain] Error stopping chat session: {str(e)}', exc_info=True)
+        return jsonify({
+            'error': 'Failed to stop chat session',
+            'details': str(e),
+            'success': False
+        }), 500
 
 
 @chat_bp.route('/chat', methods=['POST', 'GET'])
@@ -59,7 +115,10 @@ def chat():
     
     # POST request - handle chat completion
     start_time = datetime.now()
-    logger.info('[Chat Domain] Chat request received')
+    
+    # Generate unique session ID for tracking
+    session_id = str(uuid.uuid4())
+    logger.info(f'[Chat Domain] Chat request received with session ID: {session_id}')
     
     try:
         # Parse request body
@@ -180,9 +239,13 @@ def chat():
             'model': config['modelName'],
             'messages': full_messages,
             'stream': True,
-            'temperature': 0.7,
-            'max_tokens': 2000
+            'temperature': 0.7
         }
+        
+        logger.info('[Chat Domain] [LLM Request] Removed max_tokens limit to allow unlimited response length', extra={
+            'model': config['modelName'],
+            'note': 'AI responses will not be truncated by token limits'
+        })
         
         # Check if MCP tools should be used
         mcp_execution_steps = []
@@ -195,12 +258,37 @@ def chat():
                 'note': 'All MCP tools are available. LLM will analyze user query and decide which tools to call.',
             })
         
+        # Register this session as active
+        with sessions_lock:
+            active_streaming_sessions[session_id] = {
+                'stop_flag': False,
+                'start_time': start_time
+            }
+        
+        logger.info(f'[Chat Domain] Session {session_id} registered as active streaming session')
+        
         # Make streaming request to LLM API
         def generate():
             try:
+                # Send session ID to client at the beginning
+                session_event = {
+                    'type': 'session_start',
+                    'sessionId': session_id,
+                }
+                yield f"data: {json.dumps(session_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                logger.debug(f'[Chat Domain] Sent session ID to client: {session_id}')
+                # Helper function to check if stop was requested
+                def should_stop():
+                    with sessions_lock:
+                        session_data = active_streaming_sessions.get(session_id)
+                        if session_data and session_data['stop_flag']:
+                            logger.info(f'[Chat Domain] Stop signal detected for session {session_id}')
+                            return True
+                    return False
+                
                 # Step 0: If network search is enabled, perform search first
                 network_search_results = []
-                if network_search_enabled:
+                if network_search_enabled and not should_stop():
                     logger.info('[Chat Domain] [NetworkSearch] Network search enabled, performing search before chat', extra={
                         'enabled': network_search_enabled,
                     })
@@ -338,6 +426,16 @@ def chat():
                         'type': 'network_search_final_answer',
                     }
                     yield f"data: {json.dumps(final_answer_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                
+                # Check if stopped before proceeding to MCP
+                if should_stop():
+                    logger.info(f'[Chat Domain] Session {session_id} stopped before MCP execution')
+                    stop_event = {
+                        'type': 'stream_stopped',
+                        'message': 'Stream stopped by user',
+                    }
+                    yield f"data: {json.dumps(stop_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                    return
                 
                 # Step 1: If MCP is enabled, analyze if tools are needed
                 if should_use_mcp:
@@ -536,6 +634,16 @@ def chat():
                 system_prompts = [msg.get('content', '') for msg in final_messages if msg.get('role') == 'system']
                 user_prompts = [msg.get('content', '') for msg in final_messages if msg.get('role') == 'user']
                 
+                # Check if stopped before LLM request
+                if should_stop():
+                    logger.info(f'[Chat Domain] Session {session_id} stopped before LLM request')
+                    stop_event = {
+                        'type': 'stream_stopped',
+                        'message': 'Stream stopped by user',
+                    }
+                    yield f"data: {json.dumps(stop_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                    return
+                
                 logger.info('=' * 80)
                 logger.info('[Chat Domain] [LLM Request] Final prompts to be sent to LLM')
                 logger.info('=' * 80)
@@ -563,57 +671,91 @@ def chat():
                 logger.info(f'[Chat Domain] [LLM Request] Endpoint: {endpoint}')
                 logger.info('=' * 80)
                 
-                logger.info('[Chat Domain] Starting LLM API streaming request')
+                logger.info(f'[Chat Domain] Starting LLM API streaming request for session {session_id}')
                 
-                with requests.post(
+                # Use a timeout for creating the connection
+                llm_response = requests.post(
                     endpoint,
                     headers=headers,
                     json=payload,
                     stream=True,
-                    timeout=config['timeout']
-                ) as response:
-                    
-                    if response.status_code != 200:
-                        error_text = response.text
-                        logger.error(f'[Chat Domain] LLM API error: {response.status_code} - {error_text}')
+                    timeout=(10, config['timeout'])  # (connection timeout, read timeout)
+                )
+                
+                try:
+                    if llm_response.status_code != 200:
+                        error_text = llm_response.text
+                        logger.error(f'[Chat Domain] LLM API error: {llm_response.status_code} - {error_text}')
                         yield json.dumps({
-                            'error': f'LLM API error: {response.status_code}',
+                            'error': f'LLM API error: {llm_response.status_code}',
                             'details': error_text
                         }).encode('utf-8')
                         return
                     
-                    logger.info('[Chat Domain] Streaming chat response started')
+                    logger.info(f'[Chat Domain] Streaming chat response started for session {session_id}')
                     chunk_count = 0
                     
-                    for chunk in response.iter_content(chunk_size=8192):
+                    for chunk in llm_response.iter_content(chunk_size=8192):
+                        # Check if stop was requested
+                        if should_stop():
+                            logger.info(f'[Chat Domain] Session {session_id} stopped during streaming at chunk {chunk_count}')
+                            
+                            # Close the response connection
+                            llm_response.close()
+                            
+                            # Send stop event to client
+                            stop_event = {
+                                'type': 'stream_stopped',
+                                'message': 'Stream stopped by user',
+                                'chunksProcessed': chunk_count,
+                            }
+                            yield f"data: {json.dumps(stop_event, ensure_ascii=False)}\n\n".encode('utf-8')
+                            
+                            logger.info(f'[Chat Domain] Session {session_id} successfully stopped after {chunk_count} chunks')
+                            return
+                        
                         if chunk:
                             chunk_count += 1
                             yield chunk
                             
                             # Log progress periodically
                             if chunk_count % 10 == 0:
-                                logger.debug(f'[Chat Domain] Chat stream progress: {chunk_count} chunks')
+                                logger.debug(f'[Chat Domain] Chat stream progress for session {session_id}: {chunk_count} chunks')
                     
                     duration = (datetime.now() - start_time).total_seconds()
-                    logger.info(f'[Chat Domain] Chat stream completed: {chunk_count} chunks in {duration:.2f}s')
+                    logger.info(f'[Chat Domain] Chat stream completed for session {session_id}: {chunk_count} chunks in {duration:.2f}s')
+                
+                finally:
+                    # Always close the response to free resources
+                    llm_response.close()
+                    logger.debug(f'[Chat Domain] LLM response connection closed for session {session_id}')
             
             except requests.Timeout:
                 logger.error('[Chat Domain] Chat request timed out')
                 yield json.dumps({'error': 'Request timed out'}).encode('utf-8')
             
             except Exception as e:
-                logger.error(f'[Chat Domain] Error in chat stream: {str(e)}', exc_info=True)
+                logger.error(f'[Chat Domain] Error in chat stream for session {session_id}: {str(e)}', exc_info=True)
                 yield json.dumps({
                     'error': 'Failed to process chat request',
                     'details': str(e)
                 }).encode('utf-8')
+            
+            finally:
+                # Clean up session from active sessions
+                with sessions_lock:
+                    if session_id in active_streaming_sessions:
+                        del active_streaming_sessions[session_id]
+                        logger.info(f'[Chat Domain] Session {session_id} cleaned up from active sessions')
+                        logger.debug(f'[Chat Domain] Active sessions remaining: {len(active_streaming_sessions)}')
         
         return Response(
             stream_with_context(generate()),
             content_type='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive'
+                'Connection': 'keep-alive',
+                'X-Session-Id': session_id
             }
         )
     

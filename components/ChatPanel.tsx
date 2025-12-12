@@ -11,6 +11,7 @@ import { flushSync } from 'react-dom';
 import { Loader2, Trash2, Bot, Trash } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
+import ChatStopButton from './ChatStopButton';
 import MCPToolSelector from './MCPToolSelector';
 import NetworkSearchToggle from './NetworkSearchToggle';
 import { logger } from '@/lib/logger';
@@ -59,7 +60,14 @@ const ChatPanel = ({
   const [enabledMCPTools, setEnabledMCPTools] = useState<MCPConfig[]>([]);
   const [networkSearchEnabled, setNetworkSearchEnabled] = useState(false);
   const [streamingNetworkSearchSteps, setStreamingNetworkSearchSteps] = useState<any[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
@@ -168,12 +176,80 @@ const ChatPanel = ({
     }
   }, [conversationId, messages.length, dict.chat.welcomeMessage]);
 
-  // Auto-scroll to bottom on new messages
+  // Check if user is near bottom of scroll container
+  const isNearBottom = useCallback((container: HTMLElement, threshold = 100): boolean => {
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    return distanceFromBottom <= threshold;
+  }, []);
+
+  // Handle scroll events to detect user scrolling
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
     }
-  }, [messages, streamingContent]);
+
+    const handleScroll = () => {
+      // Clear any existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+
+      // Mark that user is scrolling
+      isUserScrollingRef.current = true;
+      logger.debug('User scroll detected', {
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+      }, 'ChatPanel');
+
+      // Check if user scrolled away from bottom
+      const nearBottom = isNearBottom(container);
+      if (!nearBottom) {
+        setShouldAutoScroll(false);
+        logger.debug('Auto-scroll disabled - user scrolled away from bottom', {
+          distanceFromBottom: container.scrollHeight - container.scrollTop - container.clientHeight,
+        }, 'ChatPanel');
+      } else {
+        // User scrolled back to bottom, re-enable auto-scroll
+        setShouldAutoScroll(true);
+        logger.debug('Auto-scroll re-enabled - user scrolled to bottom', undefined, 'ChatPanel');
+      }
+
+      // Reset user scrolling flag after a delay
+      scrollTimeoutRef.current = setTimeout(() => {
+        isUserScrollingRef.current = false;
+      }, 150);
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    logger.debug('Scroll event listener attached to messages container', undefined, 'ChatPanel');
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      logger.debug('Scroll event listener removed from messages container', undefined, 'ChatPanel');
+    };
+  }, [isNearBottom]);
+
+  // Auto-scroll to bottom on new messages (only if shouldAutoScroll is true)
+  useEffect(() => {
+    if (shouldAutoScroll && messagesEndRef.current && !isUserScrollingRef.current) {
+      logger.debug('Auto-scrolling to bottom', {
+        messageCount: messages.length,
+        hasStreamingContent: !!streamingContent,
+      }, 'ChatPanel');
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    } else if (!shouldAutoScroll) {
+      logger.debug('Auto-scroll skipped - user has scrolled away', {
+        messageCount: messages.length,
+        hasStreamingContent: !!streamingContent,
+      }, 'ChatPanel');
+    }
+  }, [messages, streamingContent, shouldAutoScroll]);
 
   // Notify parent of message changes
   // Use a ref to track previous messages length to avoid infinite loops
@@ -235,6 +311,8 @@ const ChatPanel = ({
     setStreamingContent('');
     setStreamingMcpSteps([]); // Clear previous MCP steps when starting new request
     setStreamingNetworkSearchSteps([]); // Clear previous network search steps when starting new request
+    setIsStopping(false); // Reset stopping state
+    setCurrentSessionId(null); // Will be set when session_start event is received
     
     logger.debug('Initialized streaming state for new request', {
       conversationId,
@@ -349,6 +427,14 @@ const ChatPanel = ({
         mcpToolsInBody: requestBody.mcpTools,
       }, 'ChatPanel');
 
+      // Create abort controller for this request
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      
+      logger.debug('Created abort controller for streaming request', {
+        conversationId,
+      }, 'ChatPanel');
+
       // Call streaming API
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -356,6 +442,7 @@ const ChatPanel = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
@@ -488,6 +575,25 @@ const ChatPanel = ({
               try {
                 const jsonStr = trimmedLine.slice(6);
                 const data = JSON.parse(jsonStr);
+                
+                // Handle session start event
+                if (data.type === 'session_start') {
+                  const sessionId = data.sessionId;
+                  logger.info('Session ID received from backend', {
+                    sessionId,
+                  }, 'ChatPanel');
+                  setCurrentSessionId(sessionId);
+                }
+                
+                // Handle stream stopped event
+                if (data.type === 'stream_stopped') {
+                  logger.info('Stream stopped event received', {
+                    message: data.message,
+                    chunksProcessed: data.chunksProcessed,
+                  }, 'ChatPanel');
+                  // Stream was stopped, exit the loop
+                  break;
+                }
                 
                 // Handle MCP-specific events
                 if (data.type === 'mcp_reasoning') {
@@ -831,6 +937,7 @@ const ChatPanel = ({
       setStreamingContent('');
       setStreamingMcpSteps([]); // Clear streaming MCP steps
       setStreamingNetworkSearchSteps([]); // Clear streaming network search steps
+      setCurrentSessionId(null); // Clear session ID
       
       logger.debug('Cleared streaming state after message completion', {
         conversationId,
@@ -839,6 +946,20 @@ const ChatPanel = ({
       }, 'ChatPanel');
 
     } catch (error) {
+      // Check if error is due to abort
+      if (error instanceof Error && error.name === 'AbortError') {
+        logger.info('Streaming request was aborted by user', {
+          conversationId,
+        }, 'ChatPanel');
+        
+        // Don't show error message for user-initiated stops
+        setStreamingContent('');
+        setStreamingMcpSteps([]);
+        setStreamingNetworkSearchSteps([]);
+        setCurrentSessionId(null);
+        return;
+      }
+      
       logger.error('Failed to send chat message', {
         error: error instanceof Error ? error.message : 'Unknown error',
         errorStack: error instanceof Error ? error.stack : undefined,
@@ -886,12 +1007,99 @@ const ChatPanel = ({
       setStreamingContent('');
       setStreamingMcpSteps([]); // Clear streaming MCP steps on error
       setStreamingNetworkSearchSteps([]); // Clear streaming network search steps on error
+      setCurrentSessionId(null); // Clear session ID
       
       logger.debug('Cleared streaming state after error', {
         conversationId,
       }, 'ChatPanel');
     } finally {
       setIsLoading(false);
+      setIsStopping(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleStopGeneration = async () => {
+    if (!currentSessionId) {
+      logger.warn('No active session to stop', undefined, 'ChatPanel');
+      return;
+    }
+
+    if (isStopping) {
+      logger.debug('Stop request already in progress', undefined, 'ChatPanel');
+      return;
+    }
+
+    setIsStopping(true);
+    logger.info('User requested to stop generation', {
+      sessionId: currentSessionId,
+    }, 'ChatPanel');
+
+    try {
+      // Get API URL for stop endpoint
+      const apiUrl = await buildApiUrl('/api/chat');
+      
+      logger.debug('Sending stop request to backend', {
+        sessionId: currentSessionId,
+        apiUrl,
+      }, 'ChatPanel');
+
+      // Send stop request to backend
+      const response = await fetch(apiUrl, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        logger.success('Stop request sent successfully', {
+          sessionId: currentSessionId,
+        }, 'ChatPanel');
+        
+        // Also abort the fetch request on client side
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          logger.debug('Aborted client-side fetch request', undefined, 'ChatPanel');
+        }
+      } else {
+        logger.warn('Stop request failed or session not found', {
+          sessionId: currentSessionId,
+          result,
+        }, 'ChatPanel');
+        
+        // Still try to abort on client side
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to send stop request', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        sessionId: currentSessionId,
+      }, 'ChatPanel');
+      
+      // Try to abort on client side as fallback
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        logger.debug('Aborted client-side fetch request as fallback', undefined, 'ChatPanel');
+      }
+    } finally {
+      // Clean up state
+      setIsStopping(false);
+      setIsLoading(false);
+      setStreamingContent('');
+      setStreamingMcpSteps([]);
+      setStreamingNetworkSearchSteps([]);
+      setCurrentSessionId(null);
+      abortControllerRef.current = null;
+      
+      logger.debug('Cleaned up after stop request', undefined, 'ChatPanel');
     }
   };
 
@@ -1008,7 +1216,10 @@ const ChatPanel = ({
   return (
     <div className="h-full flex flex-col bg-background p-2 chat-panel-container">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-2 space-y-1 chat-panel-messages">
+      <div 
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto px-3 pt-3 pb-2 space-y-1 chat-panel-messages"
+      >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
@@ -1072,6 +1283,14 @@ const ChatPanel = ({
           </>
         )}
       </div>
+
+      {/* Stop Button - shown when AI is generating */}
+      {isLoading && currentSessionId && (
+        <ChatStopButton 
+          onStop={handleStopGeneration}
+          disabled={isStopping}
+        />
+      )}
 
       {/* Model Selector, MCP Tools, and Clear Buttons */}
       <div className="px-3 py-3 border-t border-border/50 bg-background/50 flex items-center justify-between gap-4">
