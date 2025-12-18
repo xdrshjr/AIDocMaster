@@ -11,7 +11,7 @@ import { flushSync } from 'react-dom';
 import { X, Loader2, Trash2, Trash, Bot, List } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
-import ChatErrorDisplay, { type ChatErrorData } from './ChatErrorDisplay';
+import ErrorDialog, { type ErrorDialogData } from './ErrorDialog';
 import AgentStatusPanel, { type AgentStatus, type TodoItem } from './AgentStatusPanel';
 import AgentListDialog from './AgentListDialog';
 import NetworkSearchToggle from './NetworkSearchToggle';
@@ -47,8 +47,6 @@ interface Message extends ChatMessageType {
     content: string;
     score?: number;
   }>;
-  errorData?: ChatErrorData; // Error information if this is an error message
-  isError?: boolean; // Flag to indicate this is an error message
 }
 
 const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({ 
@@ -73,6 +71,8 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
   const [availableModels, setAvailableModels] = useState<ModelConfig[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
+  const [errorDialogData, setErrorDialogData] = useState<ErrorDialogData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -988,16 +988,26 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           }, 'ChatDialog');
         }
         
-        logger.error('API request failed with structured error', { 
+        logger.error('API request failed with error response', { 
           status: response.status,
           statusText: response.statusText,
+          hasBackendError: !!backendError,
+          backendErrorKeys: Object.keys(backendError),
+          errorCode: backendError.error,
+          hasUserMessage: !!backendError.user_message,
+          hasStatusCode: !!backendError.status_code,
+          hasDetails: !!backendError.details,
+          hasErrorData: !!backendError.error_data,
+        }, 'ChatDialog');
+        
+        logger.debug('Full backend error object', {
           backendError,
         }, 'ChatDialog');
         
         // Check if we have structured error data from backend
         if (backendError.error && backendError.user_message) {
-          // Create structured error data for ChatErrorDisplay
-          const structuredErrorData: ChatErrorData = {
+          // Create structured error data for ErrorDialog
+          const structuredErrorData: ErrorDialogData = {
             errorCode: backendError.error,
             statusCode: backendError.status_code || response.status,
             message: backendError.message || `API error: ${response.status}`,
@@ -1009,6 +1019,9 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           logger.info('Creating error with structured backend data', {
             errorCode: structuredErrorData.errorCode,
             statusCode: structuredErrorData.statusCode,
+            userMessage: structuredErrorData.userMessage,
+            hasDetails: !!structuredErrorData.details,
+            hasErrorData: !!structuredErrorData.errorData,
           }, 'ChatDialog');
           
           // Throw error with structured data attached
@@ -1017,6 +1030,12 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           throw error;
         } else {
           // Fallback to generic error message
+          logger.warn('Backend error missing structured data, using fallback', {
+            hasError: !!backendError.error,
+            hasUserMessage: !!backendError.user_message,
+            hasDetails: !!backendError.details,
+          }, 'ChatDialog');
+          
           const errorMessage = backendError.details || backendError.error || backendError.user_message || `Failed to get response (${response.status} ${response.statusText})`;
           throw new Error(errorMessage);
         }
@@ -1292,7 +1311,7 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       }, 'ChatDialog');
 
       // Check if error has structured error data from backend
-      const errorData = (error instanceof Error && (error as any).errorData) as ChatErrorData | undefined;
+      const errorData = (error instanceof Error && (error as any).errorData) as ErrorDialogData | undefined;
       
       logger.info('Checking for structured error data', {
         hasErrorData: !!errorData,
@@ -1301,52 +1320,45 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       
       if (errorData) {
         // Use structured error data from backend
-        logger.info('Displaying structured error from backend', {
+        logger.info('Displaying structured error from backend in dialog', {
           errorCode: errorData.errorCode,
           statusCode: errorData.statusCode,
           userMessage: errorData.userMessage,
         }, 'ChatDialog');
         
-        const errorMessage: Message = {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          content: errorData.userMessage,
-          timestamp: new Date(),
-          errorData,
-          isError: true,
-        };
-
-        logger.info('Adding error message to chat', {
-          messageId: errorMessage.id,
-          isError: errorMessage.isError,
-          hasErrorData: !!errorMessage.errorData,
-        }, 'ChatDialog');
-
-        setMessages((prev) => [...prev, errorMessage]);
+        setErrorDialogData(errorData);
+        setErrorDialogOpen(true);
       } else {
         // Fallback to generic error handling
         let userFriendlyError = 'Sorry, I encountered an error. Please try again.';
+        let errorCode = 'UNKNOWN_ERROR';
         
         if (error instanceof Error) {
           const errorMsg = error.message.toLowerCase();
           if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
             userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
+            errorCode = 'CONNECTION_ERROR';
           } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
             userFriendlyError = 'The request timed out. Please try again or check your network connection.';
+            errorCode = 'TIMEOUT';
           } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
             userFriendlyError = error.message; // Use the detailed error message from backend
+            errorCode = 'CONNECTION_ERROR';
           }
         }
 
-        const errorMessage: Message = {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          content: userFriendlyError,
-          timestamp: new Date(),
-          isError: true,
-        };
+        logger.info('Displaying generic error in dialog', {
+          errorCode,
+          userFriendlyError,
+        }, 'ChatDialog');
 
-        setMessages((prev) => [...prev, errorMessage]);
+        setErrorDialogData({
+          errorCode,
+          message: error instanceof Error ? error.message : 'Unknown error',
+          userMessage: userFriendlyError,
+          details: error instanceof Error ? error.stack : undefined,
+        });
+        setErrorDialogOpen(true);
       }
       
       setStreamingContent('');
@@ -1493,29 +1505,15 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto px-6 py-4 space-y-1"
       >
-        {messages.map((message) => {
-          // Render error messages using ChatErrorDisplay
-          if (message.isError && message.errorData) {
-            return (
-              <ChatErrorDisplay
-                key={message.id}
-                error={message.errorData}
-                timestamp={message.timestamp}
-              />
-            );
-          }
-          
-          // Render normal messages using ChatMessage
-          return (
-            <ChatMessage
-              key={message.id}
-              role={message.role as 'user' | 'assistant'}
-              content={message.content}
-              timestamp={message.timestamp}
-              references={message.references}
-            />
-          );
-        })}
+        {messages.map((message) => (
+          <ChatMessage
+            key={message.id}
+            role={message.role as 'user' | 'assistant'}
+            content={message.content}
+            timestamp={message.timestamp}
+            references={message.references}
+          />
+        ))}
 
         {/* Streaming message with typing indicator */}
         {streamingContent && (
@@ -1683,6 +1681,16 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
           setIsAgentListOpen(false);
           logger.info('Agent list dialog closed', undefined, 'ChatDialog');
         }}
+      />
+
+      {/* Error Dialog */}
+      <ErrorDialog
+        isOpen={errorDialogOpen}
+        onClose={() => {
+          logger.debug('Error dialog closed', undefined, 'ChatDialog');
+          setErrorDialogOpen(false);
+        }}
+        error={errorDialogData}
       />
     </div>
   );

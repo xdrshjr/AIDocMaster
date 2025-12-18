@@ -238,13 +238,34 @@ const ChatErrorDisplay = ({ error, timestamp }: ChatErrorDisplayProps) => {
         )}
 
         {/* Technical Details (collapsed by default, for debugging) */}
-        {error.details && (
+        {(error.details || error.errorData) && (
           <details className={`mt-3 pt-3 border-t ${style.borderColor}`}>
             <summary className={`text-xs font-medium ${style.titleColor} cursor-pointer hover:opacity-80 transition-opacity`}>
               Technical Details
             </summary>
-            <div className={`mt-2 text-xs ${style.textColor} opacity-75 font-mono bg-black/5 dark:bg-white/5 p-2 rounded overflow-x-auto`}>
-              {error.details}
+            <div className={`mt-2 space-y-2`}>
+              {error.details && (
+                <div>
+                  <div className={`text-xs font-medium ${style.titleColor} mb-1`}>
+                    Error Details:
+                  </div>
+                  <div className={`text-xs ${style.textColor} opacity-75 font-mono bg-black/5 dark:bg-white/5 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words`}>
+                    {error.details}
+                  </div>
+                </div>
+              )}
+              {error.errorData && (
+                <div>
+                  <div className={`text-xs font-medium ${style.titleColor} mb-1`}>
+                    Additional Information:
+                  </div>
+                  <div className={`text-xs ${style.textColor} opacity-75 font-mono bg-black/5 dark:bg-white/5 p-2 rounded overflow-x-auto`}>
+                    {typeof error.errorData === 'string' 
+                      ? error.errorData 
+                      : JSON.stringify(error.errorData, null, 2)}
+                  </div>
+                </div>
+              )}
             </div>
           </details>
         )}

@@ -902,10 +902,22 @@ def chat():
     
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
-        logger.error(f'[Chat Domain] Chat request failed after {duration:.2f}s: {str(e)}', exc_info=True)
+        logger.error(f'[Chat Domain] Chat request failed after {duration:.2f}s: {str(e)}', extra={
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'duration': duration,
+        }, exc_info=True)
+        
         return jsonify({
-            'error': 'Failed to process chat request',
-            'details': str(e)
+            'error': 'REQUEST_ERROR',
+            'status_code': 500,
+            'message': 'Failed to process chat request',
+            'details': str(e),
+            'user_message': 'An unexpected error occurred while processing your request. Please try again.',
+            'error_data': {
+                'error_type': type(e).__name__,
+                'duration': duration,
+            }
         }), 500
 
 

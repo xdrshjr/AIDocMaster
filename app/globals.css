@@ -541,6 +541,22 @@ body {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
+/* Scale-in animation for error dialog */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* Slide up animation for check result view */
 @keyframes slideUp {
   from {

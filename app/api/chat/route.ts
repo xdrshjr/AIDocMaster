@@ -281,30 +281,80 @@ export async function POST(request: NextRequest) {
 
     // Handle non-OK responses from Flask
     if (!flaskResponse.ok) {
-      let errorData: { error?: string; details?: string } = {};
+      let errorData: { 
+        error?: string; 
+        details?: string;
+        status_code?: number;
+        message?: string;
+        user_message?: string;
+        error_data?: any;
+      } = {};
       
       try {
         const errorText = await flaskResponse.text();
+        logger.debug('Received error response from Flask', {
+          status: flaskResponse.status,
+          responseText: errorText.substring(0, 500), // Log first 500 chars
+        }, 'API:Chat');
+        
         errorData = JSON.parse(errorText);
+        
+        logger.debug('Parsed Flask error response', {
+          hasError: !!errorData.error,
+          hasDetails: !!errorData.details,
+          hasStatusCode: !!errorData.status_code,
+          hasUserMessage: !!errorData.user_message,
+          hasErrorData: !!errorData.error_data,
+          errorCode: errorData.error,
+          statusCode: errorData.status_code,
+        }, 'API:Chat');
       } catch (parseError) {
         logger.warn('Failed to parse Flask error response', {
           parseError: parseError instanceof Error ? parseError.message : 'Unknown error',
+          status: flaskResponse.status,
         }, 'API:Chat');
       }
       
       logger.error('Flask backend returned error', {
         status: flaskResponse.status,
         statusText: flaskResponse.statusText,
-        error: errorData.error,
-        details: errorData.details,
+        errorCode: errorData.error,
+        statusCode: errorData.status_code,
+        userMessage: errorData.user_message,
+        hasDetails: !!errorData.details,
+        hasErrorData: !!errorData.error_data,
         duration: `${Date.now() - startTime}ms`,
       }, 'API:Chat');
       
+      // Forward all error fields from Flask to frontend
+      const errorResponse: any = {
+        error: errorData.error || `Flask backend error: ${flaskResponse.status} ${flaskResponse.statusText}`,
+        details: errorData.details || 'The Python backend returned an error. Please check backend logs.',
+      };
+      
+      // Include optional fields if they exist
+      if (errorData.status_code !== undefined) {
+        errorResponse.status_code = errorData.status_code;
+      }
+      if (errorData.message) {
+        errorResponse.message = errorData.message;
+      }
+      if (errorData.user_message) {
+        errorResponse.user_message = errorData.user_message;
+      }
+      if (errorData.error_data) {
+        errorResponse.error_data = errorData.error_data;
+      }
+      
+      logger.info('Forwarding structured error to frontend', {
+        errorCode: errorResponse.error,
+        hasUserMessage: !!errorResponse.user_message,
+        hasStatusCode: !!errorResponse.status_code,
+        hasErrorData: !!errorResponse.error_data,
+      }, 'API:Chat');
+      
       return new Response(
-        JSON.stringify({ 
-          error: errorData.error || `Flask backend error: ${flaskResponse.status} ${flaskResponse.statusText}`,
-          details: errorData.details || 'The Python backend returned an error. Please check backend logs.',
-        }),
+        JSON.stringify(errorResponse),
         {
           status: flaskResponse.status,
           headers: { 'Content-Type': 'application/json' },

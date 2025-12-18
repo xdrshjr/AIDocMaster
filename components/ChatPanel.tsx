@@ -12,7 +12,7 @@ import { Loader2, Trash2, Bot, Trash } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput, { type UploadedFile } from './ChatInput';
 import ChatStopButton from './ChatStopButton';
-import ChatErrorDisplay, { type ChatErrorData } from './ChatErrorDisplay';
+import ErrorDialog, { type ErrorDialogData } from './ErrorDialog';
 import MCPToolSelector from './MCPToolSelector';
 import NetworkSearchToggle from './NetworkSearchToggle';
 import { logger } from '@/lib/logger';
@@ -32,8 +32,6 @@ export interface Message extends ChatMessageType {
   isCleared?: boolean;
   mcpExecutionSteps?: any[]; // MCP execution steps for this message
   networkSearchExecutionSteps?: any[]; // Network search execution steps for this message
-  errorData?: ChatErrorData; // Error information if this is an error message
-  isError?: boolean; // Flag to indicate this is an error message
 }
 
 interface ChatPanelProps {
@@ -65,6 +63,8 @@ const ChatPanel = ({
   const [streamingNetworkSearchSteps, setStreamingNetworkSearchSteps] = useState<any[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
+  const [errorDialogData, setErrorDialogData] = useState<ErrorDialogData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -492,15 +492,27 @@ const ChatPanel = ({
           }, 'ChatPanel');
         }
         
-        logger.error('API request failed with structured error', { 
+        logger.error('API request failed with error response', { 
           status: response.status,
           statusText: response.statusText,
+          conversationId,
+          hasBackendError: !!backendError,
+          backendErrorKeys: Object.keys(backendError),
+          errorCode: backendError.error,
+          hasUserMessage: !!backendError.user_message,
+          hasStatusCode: !!backendError.status_code,
+          hasDetails: !!backendError.details,
+          hasErrorData: !!backendError.error_data,
+        }, 'ChatPanel');
+        
+        logger.debug('Full backend error object', {
+          conversationId,
           backendError,
         }, 'ChatPanel');
         
         // Check if we have structured error data from backend
         if (backendError.error && backendError.user_message) {
-          // Create structured error data for ChatErrorDisplay
+          // Create structured error data for ErrorDialog
           const structuredErrorData: ChatErrorData = {
             errorCode: backendError.error,
             statusCode: backendError.status_code || response.status,
@@ -511,8 +523,12 @@ const ChatPanel = ({
           };
           
           logger.info('Creating error with structured backend data', {
+            conversationId,
             errorCode: structuredErrorData.errorCode,
             statusCode: structuredErrorData.statusCode,
+            userMessage: structuredErrorData.userMessage,
+            hasDetails: !!structuredErrorData.details,
+            hasErrorData: !!structuredErrorData.errorData,
           }, 'ChatPanel');
           
           // Throw error with structured data attached
@@ -521,6 +537,13 @@ const ChatPanel = ({
           throw error;
         } else {
           // Fallback to generic error message
+          logger.warn('Backend error missing structured data, using fallback', {
+            conversationId,
+            hasError: !!backendError.error,
+            hasUserMessage: !!backendError.user_message,
+            hasDetails: !!backendError.details,
+          }, 'ChatPanel');
+          
           const errorMessage = backendError.details || backendError.error || backendError.user_message || `Failed to get response (${response.status} ${response.statusText})`;
           throw new Error(errorMessage);
         }
@@ -1064,81 +1087,58 @@ const ChatPanel = ({
         errorType: error instanceof Error ? error.constructor.name : typeof error,
       }, 'ChatPanel');
 
-      if (conversationId) {
-        // Check if error has structured error data from backend
-        const errorData = (error instanceof Error && (error as any).errorData) as ChatErrorData | undefined;
-        
-        logger.info('Checking for structured error data', {
-          hasErrorData: !!errorData,
-          errorDataContent: errorData,
+      // Check if error has structured error data from backend
+      const errorData = (error instanceof Error && (error as any).errorData) as ErrorDialogData | undefined;
+      
+      logger.info('Checking for structured error data', {
+        hasErrorData: !!errorData,
+        errorDataContent: errorData,
+        conversationId,
+      }, 'ChatPanel');
+      
+      if (errorData) {
+        // Use structured error data from backend
+        logger.info('Displaying structured error from backend in dialog', {
+          errorCode: errorData.errorCode,
+          statusCode: errorData.statusCode,
+          userMessage: errorData.userMessage,
           conversationId,
         }, 'ChatPanel');
         
-        let errorMessage: Message;
+        setErrorDialogData(errorData);
+        setErrorDialogOpen(true);
+      } else {
+        // Fallback to generic error handling
+        let userFriendlyError = dict.chat.errorMessage;
+        let errorCode = 'UNKNOWN_ERROR';
         
-        if (errorData) {
-          // Use structured error data from backend
-          logger.info('Displaying structured error from backend', {
-            errorCode: errorData.errorCode,
-            statusCode: errorData.statusCode,
-            userMessage: errorData.userMessage,
-            conversationId,
-          }, 'ChatPanel');
-          
-          errorMessage = {
-            id: `error-${Date.now()}`,
-            role: 'assistant',
-            content: errorData.userMessage,
-            timestamp: new Date(),
-            errorData,
-            isError: true,
-          };
-          
-          logger.info('Created error message with structured data', {
-            messageId: errorMessage.id,
-            isError: errorMessage.isError,
-            hasErrorData: !!errorMessage.errorData,
-          }, 'ChatPanel');
-        } else {
-          // Fallback to generic error handling
-          let userFriendlyError = dict.chat.errorMessage;
-          
-          if (error instanceof Error) {
-            const errorMsg = error.message.toLowerCase();
-            if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
-              userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
-            } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
-              userFriendlyError = 'The request timed out. Please try again or check your network connection.';
-            } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
-              userFriendlyError = error.message; // Use the detailed error message from backend
-            }
+        if (error instanceof Error) {
+          const errorMsg = error.message.toLowerCase();
+          if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
+            userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
+            errorCode = 'CONNECTION_ERROR';
+          } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
+            userFriendlyError = 'The request timed out. Please try again or check your network connection.';
+            errorCode = 'TIMEOUT';
+          } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
+            userFriendlyError = error.message; // Use the detailed error message from backend
+            errorCode = 'CONNECTION_ERROR';
           }
-          
-          errorMessage = {
-            id: `error-${Date.now()}`,
-            role: 'assistant',
-            content: userFriendlyError,
-            timestamp: new Date(),
-            isError: true,
-          };
         }
-
-        // Use latestMessagesMap to include the user message
-        const newMapForError = new Map(latestMessagesMap);
-        const currentMessages = newMapForError.get(conversationId) || [];
-        const messagesWithError = [...currentMessages, errorMessage];
-        newMapForError.set(conversationId, messagesWithError);
         
-        logger.info('Error message added to conversation', {
+        logger.info('Displaying generic error in dialog', {
+          errorCode,
+          userFriendlyError,
           conversationId,
-          messageCountBefore: currentMessages.length,
-          messageCountAfter: messagesWithError.length,
-          userMessagesInConversation: currentMessages.filter(m => m.role === 'user').length,
-          errorPreview: errorMessage.content.substring(0, 100),
-          isStructuredError: !!errorData,
         }, 'ChatPanel');
         
-        onMessagesMapChange(newMapForError);
+        setErrorDialogData({
+          errorCode,
+          message: error instanceof Error ? error.message : 'Unknown error',
+          userMessage: userFriendlyError,
+          details: error instanceof Error ? error.stack : undefined,
+        });
+        setErrorDialogOpen(true);
       }
       setStreamingContent('');
       setStreamingMcpSteps([]); // Clear streaming MCP steps on error
@@ -1366,30 +1366,16 @@ const ChatPanel = ({
           </div>
         ) : (
           <>
-            {messages.map((message) => {
-              // Render error messages using ChatErrorDisplay
-              if (message.isError && message.errorData) {
-                return (
-                  <ChatErrorDisplay
-                    key={message.id}
-                    error={message.errorData}
-                    timestamp={message.timestamp}
-                  />
-                );
-              }
-              
-              // Render normal messages using ChatMessage
-              return (
-                <ChatMessage
-                  key={message.id}
-                  role={message.role as 'user' | 'assistant'}
-                  content={message.content}
-                  timestamp={message.timestamp}
-                  mcpExecutionSteps={message.mcpExecutionSteps}
-                  networkSearchExecutionSteps={message.networkSearchExecutionSteps}
-                />
-              );
-            })}
+            {messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                role={message.role as 'user' | 'assistant'}
+                content={message.content}
+                timestamp={message.timestamp}
+                mcpExecutionSteps={message.mcpExecutionSteps}
+                networkSearchExecutionSteps={message.networkSearchExecutionSteps}
+              />
+            ))}
 
             {/* Streaming message with typing indicator */}
             {streamingContent && (
@@ -1512,6 +1498,18 @@ const ChatPanel = ({
         onSend={handleSendMessage}
         disabled={isLoading}
         placeholder={dict.chat.inputPlaceholder}
+      />
+
+      {/* Error Dialog */}
+      <ErrorDialog
+        isOpen={errorDialogOpen}
+        onClose={() => {
+          logger.debug('Error dialog closed', {
+            conversationId,
+          }, 'ChatPanel');
+          setErrorDialogOpen(false);
+        }}
+        error={errorDialogData}
       />
     </div>
   );
