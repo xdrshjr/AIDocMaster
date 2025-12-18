@@ -11,12 +11,13 @@ import { flushSync } from 'react-dom';
 import { X, Loader2, Trash2, Trash, Bot, List } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
+import ChatErrorDisplay, { type ChatErrorData } from './ChatErrorDisplay';
 import AgentStatusPanel, { type AgentStatus, type TodoItem } from './AgentStatusPanel';
 import AgentListDialog from './AgentListDialog';
 import NetworkSearchToggle from './NetworkSearchToggle';
 import { logger } from '@/lib/logger';
 import { type DocumentParagraph } from '@/lib/documentUtils';
-import type { ChatMessage as ChatMessageType } from '@/lib/chatClient';
+import type { ChatMessage as ChatMessageType, StreamErrorEvent, isStreamErrorEvent } from '@/lib/chatClient';
 import { syncModelConfigsToCookies } from '@/lib/modelConfigSync';
 import { buildApiUrl } from '@/lib/apiConfig';
 import { loadModelConfigs, getDefaultModel, type ModelConfig } from '@/lib/modelConfig';
@@ -46,6 +47,8 @@ interface Message extends ChatMessageType {
     content: string;
     score?: number;
   }>;
+  errorData?: ChatErrorData; // Error information if this is an error message
+  isError?: boolean; // Flag to indicate this is an error message
 }
 
 const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({ 
@@ -967,24 +970,56 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       });
 
       if (!response.ok) {
-        let errorData: { error?: string; details?: string } = {};
+        // Try to parse structured error response from backend
+        let backendError: {
+          error?: string;
+          status_code?: number;
+          message?: string;
+          details?: string;
+          user_message?: string;
+          error_data?: any;
+        } = {};
+        
         try {
-          errorData = await response.json();
+          backendError = await response.json();
         } catch (parseError) {
           logger.warn('Failed to parse error response', {
             parseError: parseError instanceof Error ? parseError.message : 'Unknown error',
           }, 'ChatDialog');
         }
         
-        logger.error('API request failed', { 
+        logger.error('API request failed with structured error', { 
           status: response.status,
           statusText: response.statusText,
-          error: errorData.error,
-          details: errorData.details,
+          backendError,
         }, 'ChatDialog');
         
-        const errorMessage = errorData.details || errorData.error || `Failed to get response (${response.status} ${response.statusText})`;
-        throw new Error(errorMessage);
+        // Check if we have structured error data from backend
+        if (backendError.error && backendError.user_message) {
+          // Create structured error data for ChatErrorDisplay
+          const structuredErrorData: ChatErrorData = {
+            errorCode: backendError.error,
+            statusCode: backendError.status_code || response.status,
+            message: backendError.message || `API error: ${response.status}`,
+            details: backendError.details,
+            userMessage: backendError.user_message,
+            errorData: backendError.error_data,
+          };
+          
+          logger.info('Creating error with structured backend data', {
+            errorCode: structuredErrorData.errorCode,
+            statusCode: structuredErrorData.statusCode,
+          }, 'ChatDialog');
+          
+          // Throw error with structured data attached
+          const error = new Error(backendError.user_message);
+          (error as any).errorData = structuredErrorData;
+          throw error;
+        } else {
+          // Fallback to generic error message
+          const errorMessage = backendError.details || backendError.error || backendError.user_message || `Failed to get response (${response.status} ${response.statusText})`;
+          throw new Error(errorMessage);
+        }
       }
 
       if (!response.body) {
@@ -1090,6 +1125,42 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                 const jsonStr = trimmedLine.slice(6);
                 const data = JSON.parse(jsonStr);
                 
+                // Check if this is an error event from backend
+                if (data.type === 'error' && data.error_code) {
+                  logger.error('Received error event from backend', {
+                    errorCode: data.error_code,
+                    statusCode: data.status_code,
+                    message: data.message,
+                    userMessage: data.user_message,
+                    fullData: data,
+                  }, 'ChatDialog');
+                  
+                  // Create error data for display
+                  const errorData: ChatErrorData = {
+                    errorCode: data.error_code,
+                    statusCode: data.status_code,
+                    message: data.message,
+                    details: data.details,
+                    userMessage: data.user_message,
+                    errorData: data.error_data,
+                  };
+                  
+                  logger.info('Creating error with structured data', {
+                    errorData,
+                  }, 'ChatDialog');
+                  
+                  // Stop streaming and throw error with error data
+                  const error = new Error(data.user_message);
+                  (error as any).errorData = errorData;
+                  
+                  logger.info('About to throw error to stop streaming', {
+                    errorMessage: error.message,
+                    hasErrorData: !!(error as any).errorData,
+                  }, 'ChatDialog');
+                  
+                  throw error;
+                }
+                
                 const chunk = data.choices?.[0]?.delta?.content;
                 if (chunk) {
                   const wasEmpty = assistantContent.length === 0;
@@ -1138,6 +1209,12 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
                   }, 'ChatDialog');
                 }
               } catch (parseError) {
+                // Check if this is an error with errorData (from backend error event)
+                if (parseError instanceof Error && (parseError as any).errorData) {
+                  // Re-throw to be caught by outer catch block
+                  throw parseError;
+                }
+                
                 parseErrorCount++;
                 logger.warn('Failed to parse SSE chunk', {
                   error: parseError instanceof Error ? parseError.message : 'Unknown error',
@@ -1207,33 +1284,71 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
       setStreamingContent('');
 
     } catch (error) {
-      logger.error('Failed to send chat message', {
+      logger.error('Failed to send chat message - CATCH BLOCK ENTERED', {
         error: error instanceof Error ? error.message : 'Unknown error',
         errorStack: error instanceof Error ? error.stack : undefined,
+        hasErrorData: !!(error instanceof Error && (error as any).errorData),
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
       }, 'ChatDialog');
 
-      // Provide more informative error message to user
-      let userFriendlyError = 'Sorry, I encountered an error. Please try again.';
+      // Check if error has structured error data from backend
+      const errorData = (error instanceof Error && (error as any).errorData) as ChatErrorData | undefined;
       
-      if (error instanceof Error) {
-        const errorMsg = error.message.toLowerCase();
-        if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
-          userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
-        } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
-          userFriendlyError = 'The request timed out. Please try again or check your network connection.';
-        } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
-          userFriendlyError = error.message; // Use the detailed error message from backend
+      logger.info('Checking for structured error data', {
+        hasErrorData: !!errorData,
+        errorDataContent: errorData,
+      }, 'ChatDialog');
+      
+      if (errorData) {
+        // Use structured error data from backend
+        logger.info('Displaying structured error from backend', {
+          errorCode: errorData.errorCode,
+          statusCode: errorData.statusCode,
+          userMessage: errorData.userMessage,
+        }, 'ChatDialog');
+        
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: errorData.userMessage,
+          timestamp: new Date(),
+          errorData,
+          isError: true,
+        };
+
+        logger.info('Adding error message to chat', {
+          messageId: errorMessage.id,
+          isError: errorMessage.isError,
+          hasErrorData: !!errorMessage.errorData,
+        }, 'ChatDialog');
+
+        setMessages((prev) => [...prev, errorMessage]);
+      } else {
+        // Fallback to generic error handling
+        let userFriendlyError = 'Sorry, I encountered an error. Please try again.';
+        
+        if (error instanceof Error) {
+          const errorMsg = error.message.toLowerCase();
+          if (errorMsg.includes('failed to connect') || errorMsg.includes('fetch failed')) {
+            userFriendlyError = 'Unable to connect to the AI service. Please check your network connection and API configuration.';
+          } else if (errorMsg.includes('timed out') || errorMsg.includes('timeout')) {
+            userFriendlyError = 'The request timed out. Please try again or check your network connection.';
+          } else if (errorMsg.includes('api url') || errorMsg.includes('accessible')) {
+            userFriendlyError = error.message; // Use the detailed error message from backend
+          }
         }
+
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: userFriendlyError,
+          timestamp: new Date(),
+          isError: true,
+        };
+
+        setMessages((prev) => [...prev, errorMessage]);
       }
-
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: userFriendlyError,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, errorMessage]);
+      
       setStreamingContent('');
     } finally {
       setIsLoading(false);
@@ -1378,15 +1493,29 @@ const ChatDialog = forwardRef<HTMLDivElement, ChatDialogProps>(({
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto px-6 py-4 space-y-1"
       >
-        {messages.map((message) => (
-          <ChatMessage
-            key={message.id}
-            role={message.role as 'user' | 'assistant'}
-            content={message.content}
-            timestamp={message.timestamp}
-            references={message.references}
-          />
-        ))}
+        {messages.map((message) => {
+          // Render error messages using ChatErrorDisplay
+          if (message.isError && message.errorData) {
+            return (
+              <ChatErrorDisplay
+                key={message.id}
+                error={message.errorData}
+                timestamp={message.timestamp}
+              />
+            );
+          }
+          
+          // Render normal messages using ChatMessage
+          return (
+            <ChatMessage
+              key={message.id}
+              role={message.role as 'user' | 'assistant'}
+              content={message.content}
+              timestamp={message.timestamp}
+              references={message.references}
+            />
+          );
+        })}
 
         {/* Streaming message with typing indicator */}
         {streamingContent && (

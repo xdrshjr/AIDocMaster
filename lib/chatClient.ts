@@ -26,6 +26,26 @@ export interface StreamChunk {
 }
 
 /**
+ * Error information from backend streaming API
+ */
+export interface StreamErrorEvent {
+  type: 'error';
+  error_code: string;
+  status_code?: number;
+  message: string;
+  details?: string;
+  user_message: string;
+  error_data?: any;
+}
+
+/**
+ * Check if a parsed SSE event is an error event
+ */
+export const isStreamErrorEvent = (data: any): data is StreamErrorEvent => {
+  return data && data.type === 'error' && typeof data.error_code === 'string';
+};
+
+/**
  * Get LLM configuration - uses user-configured default model
  * No longer depends on environment variables
  */

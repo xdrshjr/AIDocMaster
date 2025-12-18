@@ -268,6 +268,143 @@ def chat():
         
         logger.info(f'[Chat Domain] Session {session_id} registered as active streaming session')
         
+        # Try to connect to LLM API first to catch errors before streaming
+        logger.info(f'[Chat Domain] Connecting to LLM API for session {session_id}')
+        
+        try:
+            llm_response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                stream=True,
+                timeout=(10, config['timeout'])
+            )
+            
+            # Check status code before starting streaming
+            if llm_response.status_code != 200:
+                error_text = llm_response.text
+                logger.error(f'[Chat Domain] LLM API error: {llm_response.status_code} - {error_text}', extra={
+                    'status_code': llm_response.status_code,
+                    'session_id': session_id,
+                    'endpoint': endpoint,
+                })
+                
+                # Parse error details if available
+                error_details = {}
+                try:
+                    error_details = json.loads(error_text)
+                except:
+                    pass
+                
+                # Determine error type and user-friendly message
+                error_code = 'API_ERROR'
+                user_message = 'An error occurred while processing your request.'
+                
+                if llm_response.status_code == 401:
+                    error_code = 'AUTHENTICATION_ERROR'
+                    user_message = 'Authentication failed. Please check your API key in Settings.'
+                    logger.warning(f'[Chat Domain] Authentication error (401) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                elif llm_response.status_code == 403:
+                    error_code = 'PERMISSION_ERROR'
+                    user_message = 'Access denied. Please check your API permissions.'
+                    logger.warning(f'[Chat Domain] Permission error (403) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                elif llm_response.status_code == 429:
+                    error_code = 'RATE_LIMIT_ERROR'
+                    user_message = 'Rate limit exceeded. Please wait a moment and try again.'
+                    logger.warning(f'[Chat Domain] Rate limit error (429) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                elif llm_response.status_code == 500:
+                    error_code = 'SERVER_ERROR'
+                    user_message = 'AI service encountered an internal error. Please try again later.'
+                    logger.error(f'[Chat Domain] Server error (500) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                elif llm_response.status_code == 502 or llm_response.status_code == 503:
+                    error_code = 'SERVICE_UNAVAILABLE'
+                    user_message = 'AI service is temporarily unavailable. Please try again later.'
+                    logger.error(f'[Chat Domain] Service unavailable ({llm_response.status_code}) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                elif llm_response.status_code == 504:
+                    error_code = 'GATEWAY_TIMEOUT'
+                    user_message = 'AI service request timed out. Please try again.'
+                    logger.error(f'[Chat Domain] Gateway timeout (504) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                else:
+                    logger.error(f'[Chat Domain] Unexpected error ({llm_response.status_code}) for session {session_id}', extra={
+                        'endpoint': endpoint,
+                        'error_details': error_details,
+                    })
+                
+                # Close the response
+                llm_response.close()
+                
+                # Return JSON error response directly (not streaming)
+                return jsonify({
+                    'error': error_code,
+                    'status_code': llm_response.status_code,
+                    'message': f'LLM API error: {llm_response.status_code}',
+                    'details': error_text,
+                    'user_message': user_message,
+                    'error_data': error_details,
+                }), llm_response.status_code
+                
+        except requests.exceptions.Timeout as timeout_error:
+            logger.error(f'[Chat Domain] LLM API connection timeout for session {session_id}', extra={
+                'error': str(timeout_error),
+                'endpoint': endpoint,
+            }, exc_info=True)
+            
+            return jsonify({
+                'error': 'TIMEOUT',
+                'status_code': 408,
+                'message': 'Connection to AI service timed out',
+                'details': str(timeout_error),
+                'user_message': 'Connection timeout. Please check your network and try again.',
+            }), 408
+            
+        except requests.exceptions.ConnectionError as conn_error:
+            logger.error(f'[Chat Domain] LLM API connection error for session {session_id}', extra={
+                'error': str(conn_error),
+                'endpoint': endpoint,
+            }, exc_info=True)
+            
+            return jsonify({
+                'error': 'CONNECTION_ERROR',
+                'status_code': 503,
+                'message': 'Failed to connect to AI service',
+                'details': str(conn_error),
+                'user_message': 'Unable to connect to the AI service. Please check your API configuration and network connection.',
+            }), 503
+            
+        except requests.exceptions.RequestException as req_error:
+            logger.error(f'[Chat Domain] LLM API request error for session {session_id}', extra={
+                'error': str(req_error),
+                'endpoint': endpoint,
+            }, exc_info=True)
+            
+            return jsonify({
+                'error': 'REQUEST_ERROR',
+                'status_code': 500,
+                'message': 'Request to AI service failed',
+                'details': str(req_error),
+                'user_message': 'Failed to send request to AI service. Please try again.',
+            }), 500
+        
+        logger.info(f'[Chat Domain] LLM API connection successful (status 200), starting streaming for session {session_id}')
+        
         # Make streaming request to LLM API
         def generate():
             try:
@@ -672,30 +809,11 @@ def chat():
                 logger.info(f'[Chat Domain] [LLM Request] Endpoint: {endpoint}')
                 logger.info('=' * 80)
                 
-                logger.info(f'[Chat Domain] Starting LLM API streaming request for session {session_id}')
-                
-                # Use a timeout for creating the connection
-                llm_response = requests.post(
-                    endpoint,
-                    headers=headers,
-                    json=payload,
-                    stream=True,
-                    timeout=(10, config['timeout'])  # (connection timeout, read timeout)
-                )
+                # llm_response is already available from outer scope and status is 200
+                logger.info(f'[Chat Domain] Streaming chat response started for session {session_id}')
+                chunk_count = 0
                 
                 try:
-                    if llm_response.status_code != 200:
-                        error_text = llm_response.text
-                        logger.error(f'[Chat Domain] LLM API error: {llm_response.status_code} - {error_text}')
-                        yield json.dumps({
-                            'error': f'LLM API error: {llm_response.status_code}',
-                            'details': error_text
-                        }).encode('utf-8')
-                        return
-                    
-                    logger.info(f'[Chat Domain] Streaming chat response started for session {session_id}')
-                    chunk_count = 0
-                    
                     for chunk in llm_response.iter_content(chunk_size=8192):
                         # Check if stop was requested
                         if should_stop():
@@ -731,16 +849,38 @@ def chat():
                     llm_response.close()
                     logger.debug(f'[Chat Domain] LLM response connection closed for session {session_id}')
             
-            except requests.Timeout:
-                logger.error('[Chat Domain] Chat request timed out')
-                yield json.dumps({'error': 'Request timed out'}).encode('utf-8')
+            except requests.Timeout as timeout_error:
+                logger.error(f'[Chat Domain] Chat request timed out for session {session_id}', extra={
+                    'error': str(timeout_error),
+                }, exc_info=True)
+                
+                # Send structured error event to frontend
+                error_event = {
+                    'type': 'error',
+                    'error_code': 'TIMEOUT',
+                    'status_code': 408,
+                    'message': 'Request timed out',
+                    'details': str(timeout_error),
+                    'user_message': 'The request took too long to complete. Please try again.',
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n".encode('utf-8')
             
             except Exception as e:
-                logger.error(f'[Chat Domain] Error in chat stream for session {session_id}: {str(e)}', exc_info=True)
-                yield json.dumps({
-                    'error': 'Failed to process chat request',
-                    'details': str(e)
-                }).encode('utf-8')
+                logger.error(f'[Chat Domain] Error in chat stream for session {session_id}: {str(e)}', extra={
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                }, exc_info=True)
+                
+                # Send structured error event to frontend
+                error_event = {
+                    'type': 'error',
+                    'error_code': 'STREAM_ERROR',
+                    'status_code': 500,
+                    'message': 'Failed to process chat request',
+                    'details': str(e),
+                    'user_message': 'An error occurred while processing your request. Please try again.',
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n".encode('utf-8')
             
             finally:
                 # Clean up session from active sessions
