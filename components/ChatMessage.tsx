@@ -69,13 +69,18 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
     try {
       await navigator.clipboard.writeText(content);
       logger.info('Message content copied to clipboard', {
+        role: isUser ? 'user' : 'assistant',
         contentLength: content.length,
+        contentPreview: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
       }, 'ChatMessage');
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
     } catch (error) {
       logger.error('Failed to copy message content', {
+        role: isUser ? 'user' : 'assistant',
+        contentLength: content.length,
         error: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : undefined,
       }, 'ChatMessage');
     }
   };
@@ -390,13 +395,13 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
         )}
 
         <div
-          className={`relative px-4 py-3 shadow-sm transition-all hover:shadow-md ${!isUser ? 'group' : ''} ${
+          className={`relative px-4 py-3 shadow-sm transition-all hover:shadow-md group ${
             isUser
               ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
               : 'bg-muted/80 text-foreground border border-border/50'
           }`}
         >
-          {/* Action Buttons - Top Corner (Only for assistant messages) */}
+          {/* Action Buttons - Top Corner */}
           {!isUser && (
             <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200 z-10">
               <button
@@ -426,6 +431,25 @@ const ChatMessage = ({ role, content, timestamp, mcpExecutionSteps, networkSearc
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Languages className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          )}
+          {/* Copy Button for User Messages */}
+          {isUser && (
+            <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200 z-10">
+              <button
+                onClick={handleCopy}
+                onKeyDown={(e) => handleKeyDown(e, handleCopy)}
+                className={`p-1.5 rounded-md transition-all duration-200 hover:bg-white/20 text-white/80 hover:text-white bg-white/10 backdrop-blur-sm border border-white/30 ${copySuccess ? 'bg-green-500/30 border-green-400/50' : ''} shadow-sm hover:shadow-md`}
+                aria-label="Copy message"
+                tabIndex={0}
+                title={copySuccess ? 'Copied!' : 'Copy message'}
+              >
+                {copySuccess ? (
+                  <span className="text-xs font-semibold text-white">✓</span>
+                ) : (
+                  <Copy className="w-3.5 h-3.5 text-white/90" />
                 )}
               </button>
             </div>

@@ -181,6 +181,7 @@ const en = {
     conversations: 'Conversations',
     modelSelector: 'Model',
     noModelsConfigured: 'No models configured',
+    modelFixed: '(Fixed)',
     deleteConversationTitle: 'Delete conversation',
     deleteConversationDescription:
       'Are you sure you want to delete this conversation? This action cannot be undone.',
@@ -515,6 +516,7 @@ const zh = {
     conversations: '对话列表',
     modelSelector: '模型',
     noModelsConfigured: '未配置模型',
+    modelFixed: '(固定)',
     deleteConversationTitle: '删除对话',
     deleteConversationDescription: '确定要删除此对话吗？该操作无法撤销。',
     deleteConversationConfirm: '删除',

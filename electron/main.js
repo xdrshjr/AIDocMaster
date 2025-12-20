@@ -8,12 +8,13 @@
  * - System integration
  * 
  * Window Configuration:
- * - Default size: 1024x768
+ * - Default size: 1366x768
  * - Minimum size: 800x600
  * - Resizable: Yes
+ * - Auto-maximize: If screen resolution is smaller than default, window will be maximized
  */
 
-const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const ElectronAPIServer = require('./api-server');
@@ -21,7 +22,7 @@ const FlaskBackendManager = require('./flask-launcher');
 
 // Window configuration constants
 const WINDOW_CONFIG = {
-  DEFAULT_WIDTH: 1024,
+  DEFAULT_WIDTH: 1366,
   DEFAULT_HEIGHT: 768,
   MIN_WIDTH: 800,
   MIN_HEIGHT: 600,
@@ -174,6 +175,44 @@ function createWindow() {
       minWidth: WINDOW_CONFIG.MIN_WIDTH,
       minHeight: WINDOW_CONFIG.MIN_HEIGHT,
     });
+
+    // Check screen resolution and maximize if smaller than default
+    try {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const screenSize = primaryDisplay.size;
+      const screenWidth = screenSize.width;
+      const screenHeight = screenSize.height;
+
+      logger.info('Screen resolution detected', {
+        screenWidth,
+        screenHeight,
+        defaultWidth: WINDOW_CONFIG.DEFAULT_WIDTH,
+        defaultHeight: WINDOW_CONFIG.DEFAULT_HEIGHT,
+      });
+
+      // If screen resolution is smaller than default, maximize the window
+      if (screenWidth < WINDOW_CONFIG.DEFAULT_WIDTH || screenHeight < WINDOW_CONFIG.DEFAULT_HEIGHT) {
+        logger.info('Screen resolution is smaller than default, maximizing window', {
+          screenWidth,
+          screenHeight,
+          defaultWidth: WINDOW_CONFIG.DEFAULT_WIDTH,
+          defaultHeight: WINDOW_CONFIG.DEFAULT_HEIGHT,
+        });
+        mainWindow.maximize();
+        logger.success('Window maximized due to small screen resolution');
+      } else {
+        logger.debug('Screen resolution is sufficient, using default window size', {
+          screenWidth,
+          screenHeight,
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to check screen resolution or maximize window', {
+        error: error.message,
+        stack: error.stack,
+      });
+      // Continue with default window size if screen detection fails
+    }
 
     // Remove the default menu bar (File, Edit, etc.)
     Menu.setApplicationMenu(null);

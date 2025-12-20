@@ -57,6 +57,8 @@ const ChatPanel = ({
   const [availableModels, setAvailableModels] = useState<ModelConfig[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig | null>(null);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const [fixedModel, setFixedModel] = useState<ModelConfig | null>(null); // Fixed model for chatbot/agent
+  const [isModelFixed, setIsModelFixed] = useState(false); // Whether model selector should be disabled
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [enabledMCPTools, setEnabledMCPTools] = useState<MCPConfig[]>([]);
   const [networkSearchEnabled, setNetworkSearchEnabled] = useState(false);
@@ -134,6 +136,109 @@ const ChatPanel = ({
   useEffect(() => {
     loadModels();
   }, [loadModels]);
+
+  // Handle fixed model for chatbot/agent conversations
+  useEffect(() => {
+    const checkAndSetFixedModel = async () => {
+      if (!conversation) {
+        setIsModelFixed(false);
+        setFixedModel(null);
+        logger.debug('No conversation, model selector enabled', undefined, 'ChatPanel');
+        return;
+      }
+
+      const conversationType = conversation.type || 'basic';
+      
+      if (conversationType === 'chatbot' && conversation.metadata?.chatbotId) {
+        try {
+          logger.info('Loading fixed model for chatbot conversation', {
+            conversationId: conversation.id,
+            chatbotId: conversation.metadata.chatbotId,
+          }, 'ChatPanel');
+          
+          const chatbot = await getChatBotById(conversation.metadata.chatbotId);
+          if (chatbot && chatbot.modelId) {
+            // Find the model in available models
+            const model = availableModels.find(m => m.id === chatbot.modelId);
+            if (model) {
+              setFixedModel(model);
+              setSelectedModel(model);
+              setIsModelFixed(true);
+              logger.info('Fixed model set for chatbot', {
+                chatbotId: chatbot.id,
+                chatbotName: chatbot.name,
+                modelId: model.id,
+                modelName: model.name,
+              }, 'ChatPanel');
+            } else {
+              logger.warn('Chatbot model not found in available models', {
+                chatbotId: chatbot.id,
+                requestedModelId: chatbot.modelId,
+                availableModelIds: availableModels.map(m => m.id),
+              }, 'ChatPanel');
+              setIsModelFixed(false);
+              setFixedModel(null);
+            }
+          } else {
+            logger.warn('Chatbot has no modelId configured', {
+              chatbotId: conversation.metadata.chatbotId,
+            }, 'ChatPanel');
+            setIsModelFixed(false);
+            setFixedModel(null);
+          }
+        } catch (error) {
+          logger.error('Failed to load chatbot configuration for fixed model', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            chatbotId: conversation.metadata.chatbotId,
+          }, 'ChatPanel');
+          setIsModelFixed(false);
+          setFixedModel(null);
+        }
+      } else if (conversationType === 'agent') {
+        try {
+          logger.info('Loading fixed model for agent conversation', {
+            conversationId: conversation.id,
+            agentType: conversation.metadata?.agentType,
+          }, 'ChatPanel');
+          
+          // For agent, use default model
+          const defaultModel = await getDefaultModel();
+          if (defaultModel) {
+            setFixedModel(defaultModel);
+            setSelectedModel(defaultModel);
+            setIsModelFixed(true);
+            logger.info('Fixed model set for agent (using default model)', {
+              agentType: conversation.metadata?.agentType,
+              modelId: defaultModel.id,
+              modelName: defaultModel.name,
+            }, 'ChatPanel');
+          } else {
+            logger.warn('No default model available for agent conversation', {
+              agentType: conversation.metadata?.agentType,
+            }, 'ChatPanel');
+            setIsModelFixed(false);
+            setFixedModel(null);
+          }
+        } catch (error) {
+          logger.error('Failed to load default model for agent', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            agentType: conversation.metadata?.agentType,
+          }, 'ChatPanel');
+          setIsModelFixed(false);
+          setFixedModel(null);
+        }
+      } else {
+        // Basic conversation - model selector enabled
+        setIsModelFixed(false);
+        setFixedModel(null);
+        logger.debug('Basic conversation, model selector enabled', {
+          conversationId: conversation.id,
+        }, 'ChatPanel');
+      }
+    };
+
+    checkAndSetFixedModel();
+  }, [conversation, availableModels]);
 
   // Listen for model configuration update events (from Settings) and refresh models
   useEffect(() => {
@@ -378,7 +483,10 @@ const ChatPanel = ({
 
       // Prepare system prompt and model based on conversation type
       let systemPrompt: string | undefined = undefined;
-      let conversationModelId: string | null = selectedModel?.id || null;
+      // Use fixed model if available, otherwise use selected model
+      let conversationModelId: string | null = (isModelFixed && fixedModel) 
+        ? fixedModel.id 
+        : (selectedModel?.id || null);
 
       if (conversation?.type === 'chatbot' && conversation.metadata?.chatbotId) {
         try {
@@ -391,6 +499,7 @@ const ChatPanel = ({
               chatbotName: chatbot.name,
               modelId: chatbot.modelId,
               hasSystemPrompt: !!systemPrompt,
+              isModelFixed,
             }, 'ChatPanel');
           } else {
             logger.warn('Chat bot not found, using default settings', {
@@ -403,6 +512,14 @@ const ChatPanel = ({
             chatbotId: conversation.metadata.chatbotId,
           }, 'ChatPanel');
         }
+      } else if (conversation?.type === 'agent' && isModelFixed && fixedModel) {
+        // For agent, use the fixed model (default model)
+        conversationModelId = fixedModel.id;
+        logger.info('Using fixed model for agent conversation', {
+          agentType: conversation.metadata?.agentType,
+          modelId: fixedModel.id,
+          modelName: fixedModel.name,
+        }, 'ChatPanel');
       }
 
       // Prepare request body with selected model ID, system prompt, MCP tools, and network search
@@ -1435,24 +1552,33 @@ const ChatPanel = ({
           <label htmlFor="model-selector" className="text-sm text-muted-foreground font-medium whitespace-nowrap">
             {dict.chat.modelSelector}:
           </label>
-          <select
-            id="model-selector"
-            value={selectedModel?.id || ''}
-            onChange={handleModelChange}
-            disabled={isLoadingModels || availableModels.length === 0 || isLoading}
-            className="px-3 py-1.5 text-sm bg-background border border-input rounded-md hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            aria-label="Select AI model"
-          >
-            {availableModels.length === 0 ? (
-              <option value="">{dict.chat.noModelsConfigured}</option>
-            ) : (
-              availableModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))
-            )}
-          </select>
+          {isModelFixed && fixedModel ? (
+            // Fixed model display for chatbot/agent (read-only)
+            <div className="px-3 py-1.5 text-sm bg-muted/50 border border-input rounded-md text-foreground flex items-center gap-2">
+              <span>{fixedModel.name}</span>
+              <span className="text-xs text-muted-foreground">{dict.chat.modelFixed}</span>
+            </div>
+          ) : (
+            // Normal model selector for basic conversations
+            <select
+              id="model-selector"
+              value={selectedModel?.id || ''}
+              onChange={handleModelChange}
+              disabled={isLoadingModels || availableModels.length === 0 || isLoading}
+              className="px-3 py-1.5 text-sm bg-background border border-input rounded-md hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              aria-label="Select AI model"
+            >
+              {availableModels.length === 0 ? (
+                <option value="">{dict.chat.noModelsConfigured}</option>
+              ) : (
+                availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))
+              )}
+            </select>
+          )}
 
           {/* MCP Tool Selector */}
           <MCPToolSelector
